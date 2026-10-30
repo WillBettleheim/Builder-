@@ -605,3 +605,13 @@ button.progress-card:hover { border-color: var(--ink-3); }
 .badge small { font-size: 10.5px; color: var(--ink-3); line-height: 1.3; }
 .badge-toast { font-size: 20px; vertical-align: -3px; }
 @media (max-width: 600px) { .badge-count { display: none; } }
+
+/* ---------- parts tray search ---------- */
+.tray-tools { flex: none; display: grid; gap: 6px; align-content: center; width: 230px; padding-right: 6px; border-right: 1px solid var(--line); margin-right: 2px; }
+.tray-search { height: 30px; border: 1px solid var(--line-2); border-radius: 8px; padding: 0 10px; background: var(--card); font-size: 12.5px; }
+.tray-search:focus { outline: none; border-color: var(--accent); }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.chip { border: 1px solid var(--line); background: var(--card); border-radius: 999px; padding: 2px 8px; font: 600 11px var(--sans); color: var(--ink-2); }
+.chip[aria-pressed='true'] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.tray-none { align-self: center; color: var(--ink-3); font-size: 13px; margin: 0 8px; }
+@media (max-width: 600px) { .tray-tools { width: 180px; } }

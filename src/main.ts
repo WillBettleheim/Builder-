@@ -1020,16 +1020,59 @@ function renderTray() {
     const active = trayEl.querySelector<HTMLElement>('.active');
     if (active) trayEl.scrollLeft = active.offsetLeft - trayEl.clientWidth / 2 + active.offsetWidth / 2;
   } else {
-    trayEl.innerHTML = PALETTE.map(t => `
-      <button class="tray-card part" data-add="${t}" title="Add ${esc(PARTS[t].name)}">
+    trayEl.innerHTML = `
+      <div class="tray-tools">
+        <input class="tray-search" type="search" placeholder="Search parts…" aria-label="Search parts" value="${esc(partFilter.text)}">
+        <div class="chips" role="group" aria-label="Part categories">
+          ${['All', ...Object.keys(PART_CATEGORIES)].map(c => `<button class="chip" data-cat="${c}" aria-pressed="${partFilter.cat === c}">${c}</button>`).join('')}
+        </div>
+      </div>
+      ${PALETTE.map(t => `
+      <button class="tray-card part" data-add="${t}" data-name="${esc(`${PARTS[t].name} ${PARTS[t].blurb}`.toLowerCase())}" title="${esc(PARTS[t].blurb)}">
         <img src="${partThumbnail(t)}" alt="">
         <span>${esc(PARTS[t].name)}</span>
         <b class="plus">+</b>
-      </button>`).join('');
+      </button>`).join('')}
+      <p class="tray-none" hidden>No parts match.</p>`;
+    filterParts();
   }
 }
 
+// ---------- parts tray filtering ----------
+const PART_CATEGORIES: Record<string, string[]> = {
+  Lights: ['led', 'rgb', 'traffic', 'neopixel'],
+  Inputs: ['button', 'keypad', 'pot', 'joystick'],
+  Sensors: ['ldr', 'temp', 'dht', 'soil', 'pir', 'ultrasonic'],
+  Displays: ['seg7', 'lcd', 'oled'],
+  Motion: ['servo', 'stepper', 'motor', 'relay', 'buzzer'],
+  Other: ['breadboard', 'car'],
+};
+const partFilter = { text: '', cat: 'All' };
+
+function filterParts() {
+  const words = partFilter.text.toLowerCase().split(/\s+/).filter(Boolean);
+  let shown = 0;
+  trayEl.querySelectorAll<HTMLElement>('.tray-card.part').forEach(card => {
+    const inCat = partFilter.cat === 'All' || PART_CATEGORIES[partFilter.cat]?.includes(card.dataset.add!);
+    const ok = inCat && words.every(w => card.dataset.name!.includes(w));
+    card.hidden = !ok;
+    if (ok) shown++;
+  });
+  const none = trayEl.querySelector<HTMLElement>('.tray-none');
+  if (none) none.hidden = shown > 0;
+  trayEl.querySelectorAll<HTMLElement>('.chip').forEach(c => c.setAttribute('aria-pressed', String(c.dataset.cat === partFilter.cat)));
+}
+
+trayEl.addEventListener('input', e => {
+  const input = e.target as HTMLInputElement;
+  if (!input.classList.contains('tray-search')) return;
+  partFilter.text = input.value;
+  filterParts();
+});
+
 trayEl.addEventListener('click', e => {
+  const chip = (e.target as HTMLElement).closest<HTMLElement>('.chip');
+  if (chip) { partFilter.cat = chip.dataset.cat!; filterParts(); return; }
   const card = (e.target as HTMLElement).closest<HTMLElement>('.tray-card');
   if (!card) return;
   if (card.dataset.lesson) goLesson(LESSONS.find(l => l.id === card.dataset.lesson)!);
