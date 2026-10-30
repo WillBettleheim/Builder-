@@ -13,6 +13,9 @@ import { Timeline, type Track } from './ui/timeline';
 import { buildSheetHtml } from './ui/buildsheet';
 import { QUIZZES, answerOrder } from './quizzes';
 import { BADGES } from './badges';
+import { Instructor, type InstructorReply } from './ui/instructor';
+import { explainError, searchTopics } from './ui/instructor-kb';
+import { DOCS } from './ui/docs';
 import { LESSONS, type GoalCtx, type Lesson, type PartSpec } from './lessons';
 
 // ---------- persistence ----------
@@ -34,11 +37,12 @@ interface Saved {
   badges: Record<string, number>;
   quiz: Record<string, Record<number, { tries: number; ok: boolean }>>;
   stats: { wires: number };
+  instructor: boolean;
 }
 const KEY = 'builder-v1';
 const OLD_KEY = 'arduino-lab-v1'; // name before the app became Builder
 function load(): Saved {
-  const empty: Saved = { mode: 'lessons', lessonId: LESSONS[0].id, goals: {}, lessons: {}, sandbox: null, projects: [], projectId: '', muted: false, theme: 'auto', toured: false, quality: 'auto', badges: {}, quiz: {}, stats: { wires: 0 } };
+  const empty: Saved = { mode: 'lessons', lessonId: LESSONS[0].id, goals: {}, lessons: {}, sandbox: null, projects: [], projectId: '', muted: false, theme: 'auto', toured: false, quality: 'auto', badges: {}, quiz: {}, stats: { wires: 0 }, instructor: true };
   try {
     const raw = localStorage.getItem(KEY) ?? localStorage.getItem(OLD_KEY);
     return raw ? { ...empty, ...JSON.parse(raw) } : empty;
@@ -74,6 +78,7 @@ const statusEl = $('status');
 
 const world = new World(stage);
 const editor = new CodeEditor($('editor'));
+const nova = new Instructor(stage);
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 let mode: 'lessons' | 'sandbox' = saved.mode;
@@ -239,6 +244,7 @@ function showError(err: CompileError | RuntimeError, kind: string) {
   errorEl.hidden = false;
   errorEl.innerHTML = `<b>${kind} error on line ${err.line}</b><span>${esc(err.message)}</span>`;
   editor.showError(err.line);
+  novaOnError(err);
 }
 
 function clearError() {
@@ -300,7 +306,7 @@ function setStatus(kind: 'running' | 'stopped' | 'error', text: string) {
   statusEl.querySelector('span')!.textContent = text;
 }
 
-world.board.onHint = text => toast(esc(text), 'hint', 10000);
+world.board.onHint = text => (nova.enabled ? nova.say(esc(text), { mood: 'think' }) : toast(esc(text), 'hint', 10000));
 world.board.onSerial = text => { serialDirty = true; plotter.push(text); };
 let serialDirty = false;
 
@@ -371,8 +377,15 @@ function checkGoals() {
         checkLessonBadges();
         const idx = LESSONS.indexOf(lesson);
         const next = LESSONS[idx + 1];
-        toast(`<b>Lesson complete!</b> ${esc(lesson.title)}`, 'good', 9000, next ? { label: `Next: ${next.title} →`, fn: () => goLesson(next) } : undefined);
+        if (nova.enabled) {
+          nova.say(`<b>Mission accomplished!</b> 🎉 You finished <b>${esc(lesson.title)}</b>. ${next ? 'Ready for your next mission?' : 'That was the final mission. You’re a real Builder now!'}`,
+            { mood: 'cheer', actions: next ? [{ label: `Next: ${next.title} →`, primary: true, run: () => goLesson(next) }] : [] });
+        } else toast(`<b>Lesson complete!</b> ${esc(lesson.title)}`, 'good', 9000, next ? { label: `Next: ${next.title} →`, fn: () => goLesson(next) } : undefined);
+      } else if (nova.enabled) {
+        const nextGoal = lesson.goals.find((_, j) => !done[j]);
+        nova.say(`Objective complete ✓ <b>${esc(g.text)}</b>${nextGoal ? `<br>Next objective: ${esc(nextGoal.text)}` : ''}`, { mood: 'cheer' });
       } else toast(`<b>Goal reached</b> ${esc(g.text)}`, 'good', 4000);
+      lastProgress = Date.now();
     }
   });
 }
@@ -980,7 +993,7 @@ world.onWiresChanged = issues => {
     if (saved.stats.wires >= 25) award('wire-25');
   }
   if (issues.some(i => i.key.startsWith('short'))) award('short');
-  for (const i of issues) toast(esc(i.text), 'error', 9000);
+  for (const i of issues) nova.enabled ? nova.say(`Careful! ${esc(i.text)}`, { mood: 'wow' }) : toast(esc(i.text), 'error', 9000);
   renderInspector();
 };
 world.onChange = () => {
@@ -1107,6 +1120,8 @@ function openLesson(l: Lesson, fresh = false) {
   renderTray();
   guideEl.querySelector('.g-body')?.scrollTo(0, 0);
   save();
+  lastProgress = Date.now();
+  if (!tourActive) setTimeout(() => { if (lesson === l && mode === 'lessons') novaLessonIntro(); }, 900);
 }
 
 function openSandbox() {
@@ -1328,6 +1343,167 @@ themeBtn.onclick = () => {
 };
 darkQuery.addEventListener('change', () => { if (saved.theme === 'auto') applyTheme(); });
 
+// ---------- Nova, the instructor ----------
+let tourActive = false;
+let lastProgress = Date.now();
+let lastActivity = Date.now();
+addEventListener('pointerdown', () => { lastActivity = Date.now(); }, true);
+addEventListener('keydown', () => { lastActivity = Date.now(); }, true);
+
+const stripHtml = (h: string) => h.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+const firstSentence = (h: string) => (stripHtml(h).match(/^.*?[.!?](\s|$)/)?.[0] ?? stripHtml(h)).trim();
+
+function applyInstructor() {
+  nova.setEnabled(saved.instructor);
+  document.body.classList.toggle('instructor-on', saved.instructor);
+  $<HTMLInputElement>('instructor-toggle').checked = saved.instructor;
+}
+$<HTMLInputElement>('instructor-toggle').addEventListener('change', e => {
+  saved.instructor = (e.target as HTMLInputElement).checked;
+  applyInstructor();
+  save();
+});
+
+function novaLessonIntro() {
+  if (!nova.enabled) return;
+  const done = saved.goals[lesson.id] ?? [];
+  if (lessonComplete(lesson)) {
+    nova.say(`Back at <b>${esc(lesson.title)}</b>? Mission already complete, so this one’s yours to experiment with.`, { mood: 'happy' });
+    return;
+  }
+  const goal = lesson.goals.find((_, i) => !done[i]);
+  nova.say(`<b>Mission briefing: ${esc(lesson.title)}</b><br>${esc(firstSentence(lesson.intro))}${goal ? `<br><br>Objective: <b>${esc(goal.text)}</b>` : ''}`, {
+    mood: 'talk', actions: [{ label: 'What do I do?', run: () => nova.ask('What do I do next?') }],
+  });
+}
+
+function novaOnError(err: CompileError | RuntimeError) {
+  if (!nova.enabled) return;
+  nova.say(`Hmm, there’s a problem on <b>line ${err.line}</b>. ${explainError(err.message)}`, {
+    mood: 'concern',
+    actions: [{ label: `Show line ${err.line}`, primary: true, run: () => editor.revealLine(err.line) }, { label: 'Explain more', run: () => nova.ask('Why isn’t it working?') }],
+  });
+}
+
+/** The TODO comments in the current code, with line numbers: the usual next step in a lesson. */
+function todos(): { line: number; text: string }[] {
+  return editor.value.split('\n').map((t, i) => ({ line: i + 1, text: t.trim() })).filter(t => /TODO/.test(t.text));
+}
+
+function nextStepReply(): InstructorReply {
+  if (mode === 'sandbox') {
+    return {
+      html: 'This is your sandbox, so you decide! Add a part from the tray, wire its legs to the board, then write code for it. Stuck for ideas? Try making a night light, a doorbell with a button and buzzer, or a servo that follows a knob.',
+      chips: ['How do I wire things?', 'Why isn’t it working?', 'What is a breadboard?'],
+    };
+  }
+  const done = saved.goals[lesson.id] ?? [];
+  const goal = lesson.goals.find((_, i) => !done[i]);
+  if (!goal) {
+    const next = LESSONS[LESSONS.indexOf(lesson) + 1];
+    return { html: 'You’ve finished every goal here. Brilliant! Try the quiz below the goals, or move on.', mood: 'cheer', actions: next ? [{ label: `Next: ${next.title} →`, primary: true, run: () => goLesson(next) }] : [] };
+  }
+  const t = todos();
+  const parts: string[] = [`Current objective: <b>${esc(goal.text)}</b>.`];
+  if (t.length) parts.push(`Look at the <b>TODO</b> on line ${t[0].line}: <code>${esc(t[0].text.replace(/^\/\/\s*/, ''))}</code>`);
+  else parts.push('Read the goal carefully, change the code or the circuit to match, then press <b>Run</b> and watch the scene.');
+  if (!running) parts.push('Don’t forget to press <b>Run</b> to try it.');
+  const actions = [
+    ...(t.length ? [{ label: `Show line ${t[0].line}`, primary: true, run: () => editor.revealLine(t[0].line) }] : []),
+    { label: 'Show me the solution', run: () => { $('code-solution').click(); } },
+  ];
+  return { html: parts.join(' '), mood: 'talk', actions, chips: ['Why isn’t it working?', 'Explain this lesson'] };
+}
+
+/** Look for the usual reasons a circuit or sketch isn't doing anything. */
+function diagnoseReply(): InstructorReply {
+  if (!errorEl.hidden) {
+    const msg = errorEl.querySelector('span')?.textContent ?? '';
+    const line = Number(errorEl.querySelector('b')?.textContent?.match(/line (\d+)/)?.[1]);
+    return { html: `There’s an error to fix first: “${esc(msg)}”. ${explainError(msg)}`, mood: 'concern', actions: line ? [{ label: `Show line ${line}`, primary: true, run: () => editor.revealLine(line) }] : [] };
+  }
+  const unpowered = world.parts.filter(p => p.state.missing?.length);
+  if (unpowered.length) {
+    const p = unpowered[0];
+    return {
+      html: `Your <b>${esc(PARTS[p.type].name)}</b> isn’t complete: <b>${esc(p.state.missing.join(' and '))}</b> ${p.state.missing.length > 1 ? 'aren’t' : 'isn’t'} wired yet. Every part needs power and ground to work.`,
+      mood: 'concern', actions: [{ label: 'Select it', primary: true, run: () => world.select(p) }],
+    };
+  }
+  if (world.issues.length) return { html: esc(world.issues[0].text), mood: 'wow' };
+  for (const p of world.parts) {
+    if (p.type === 'uno') continue;
+    const loose = PARTS[p.type].terminals(p).find(t => t.kind === 'signal' && p.pins[t.key] == null);
+    if (loose) {
+      return { html: `The <b>${esc(PARTS[p.type].name)}</b>’s <b>${esc(loose.label)}</b> leg isn’t connected to a board pin yet. Drag a wire from it to the pin your code uses.`, mood: 'think', actions: [{ label: 'Select it', primary: true, run: () => world.select(p) }] };
+    }
+  }
+  if (!running) return { html: 'Everything’s wired up. The sketch just isn’t running yet: press <b>Run</b> (or Ctrl/⌘ + Enter).', mood: 'happy', actions: [{ label: 'Run it', primary: true, run: () => run() }] };
+  // pins the code drives that nothing is wired to
+  const wired = new Set(world.parts.flatMap(p => Object.values(p.pins)).filter((x): x is number => x != null));
+  const driven = world.board.pins.map((p, i) => (p.mode === 'OUTPUT' ? i : -1)).filter(i => i >= 0 && i !== 13 && !wired.has(i));
+  if (driven.length) return { html: `Your code uses <b>pin ${driven[0]}</b>, but nothing is wired to it. Code and wiring must match: check which pin your part is on.`, mood: 'think' };
+  const idle = world.parts.flatMap(p => Object.entries(p.pins).map(([k, pin]) => ({ p, k, pin }))).find(x => x.pin != null && world.board.pins[x.pin].mode !== 'OUTPUT' && !world.board.transitions.has(x.pin) && ['led', 'rgb', 'motor', 'relay', 'traffic', 'buzzer'].includes(x.p.type));
+  if (idle) return { html: `The <b>${esc(PARTS[idle.p.type].name)}</b> is on pin ${idle.pin}, but your code never sets that pin as an OUTPUT. Did you mean a different pin, or forget <code>pinMode(${idle.pin}, OUTPUT)</code>?`, mood: 'think' };
+  return {
+    html: 'I can’t spot anything wrong with the wiring. Try printing values with <code>Serial.println()</code>, or press <b>Pause</b> then <b>Step</b> to follow your code line by line.',
+    mood: 'think', chips: ['What is the Serial Monitor?', 'How do I use Step?'],
+  };
+}
+
+/** Answer a typed question from what Nova knows about the app and the current lesson. */
+function novaAnswer(question: string): InstructorReply {
+  award('curious');
+  const q = question.toLowerCase();
+  if (/^(hi|hello|hey|yo)\b/.test(q)) return { html: 'Hello! 👋 What are we building today? Ask me about any part, function, or error.', mood: 'cheer' };
+  if (/thank/.test(q)) return { html: 'You’re welcome! Keep going, you’re doing great. ✨', mood: 'cheer' };
+  if (/who are you|your name|what are you/.test(q)) return { html: 'I’m <b>Nova</b>, Builder’s field engineer. I’ve wired more circuits than I can count, and I know every part, function and lesson here. Think of me as your mission control.', mood: 'happy' };
+  if (/next|stuck|what (do|should) i|what now|how do i (finish|pass|complete)|goal|hint|help me/.test(q)) return nextStepReply();
+  if (/(not|isn.?t|doesn.?t|won.?t|can.?t|nothing)\b.*\b(work|light|move|run|show|happen|turn|spin|beep)|wrong|broken|bug|error|fix|stuck on/.test(q)) return diagnoseReply();
+  if (/solution|answer|cheat/.test(q) && mode === 'lessons') {
+    return { html: 'Trying it yourself first is the best way to learn, but if you’re really stuck, peeking is fine. Compare it with your code afterwards!', mood: 'think', actions: [{ label: 'Show the solution', run: () => { $('code-solution').click(); } }] };
+  }
+  if (/explain|this lesson|what am i (doing|learning)|about/.test(q) && mode === 'lessons') {
+    const paras = lesson.intro.match(/<p>[\s\S]*?<\/p>/g) ?? [];
+    return { html: `<b>${esc(lesson.title)}</b>: ${paras.slice(0, 2).map(stripHtml).map(esc).join(' ')}`, mood: 'talk', chips: ['What do I do next?', ...searchTopics(stripHtml(lesson.intro)).slice(0, 2).map(t => `Tell me about ${t.title}`)] };
+  }
+  // a function name, e.g. "what does analogWrite do"
+  const fn = Object.keys(DOCS).filter(k => !k.includes('.') && DOCS[k].kind !== 'const').find(k => new RegExp(`\\b${k.toLowerCase()}\\b`).test(q));
+  const member = Object.keys(DOCS).filter(k => k.includes('.')).find(k => q.includes(k.split('.')[1].toLowerCase()) && k.split('.')[1].length > 4);
+  const topics = searchTopics(question);
+  const doc = fn ? DOCS[fn] : member ? DOCS[member] : null;
+  if (doc && (!topics.length || q.includes((fn ?? member!.split('.')[1]).toLowerCase()))) {
+    return { html: `<code>${esc(doc.sig)}</code><br>${esc(doc.doc)}`, mood: 'talk', chips: topics.slice(0, 2).map(t => `Tell me about ${t.title}`) };
+  }
+  // a part, e.g. "how does the stepper motor work": a named part beats a loose keyword match
+  const words = (x: string) => x.toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 2);
+  const partScore = (d: (typeof PARTS)[string]) =>
+    (q.includes(d.name.toLowerCase()) ? 10 : 0) + (new RegExp(`\\b${d.type}s?\\b`).test(q) ? 3 : 0) + words(d.name).filter(w => new RegExp(`\\b${w}s?\\b`).test(q)).length;
+  const part = Object.values(PARTS).filter(d => d.type !== 'uno' && partScore(d) > 0).sort((a, b) => partScore(b) - partScore(a))[0];
+  if (part) return { html: `<b>${esc(part.name)}</b>: ${esc(part.blurb)}`, mood: 'talk', chips: topics.slice(0, 2).map(t => `Tell me about ${t.title}`) };
+  if (topics.length) {
+    return { html: `<b>${topics[0].title}</b><br>${topics[0].answer}`, mood: 'talk', chips: topics.slice(1, 3).map(t => `Tell me about ${t.title}`) };
+  }
+  return {
+    html: 'Hmm, I’m not sure about that one. I know about the parts, the functions in the reference, wiring, errors and every lesson. Try asking it another way, or pick a topic below.',
+    mood: 'think', chips: ['What do I do next?', 'Why isn’t it working?', 'What is PWM?', 'What is a breadboard?'],
+  };
+}
+nova.onAsk = novaAnswer;
+
+// offer help when someone has been active but stuck on a goal for a while
+setInterval(() => {
+  if (!nova.enabled || mode !== 'lessons' || tourActive || lessonComplete(lesson) || nova.panelOpen || !modal.hidden) return;
+  const now = Date.now();
+  if (now - lastProgress > 120000 && now - lastActivity < 30000 && now - nova.lastSpoke > 90000) {
+    lastProgress = now; // don't nag: wait another stretch before offering again
+    nova.say('Need backup? I can point you to the next step.', {
+      mood: 'think',
+      actions: [{ label: 'Give me a hint', primary: true, run: () => nova.ask('What do I do next?') }, { label: 'I’m fine', run: () => {} }],
+    });
+  }
+}, 15000);
+
 // ---------- graphics quality ----------
 /** A sensible default for this device: phones and small-memory machines get the lighter modes. */
 function autoQuality(): 'high' | 'balanced' | 'low' {
@@ -1375,13 +1551,24 @@ function startTour() {
     { target: q('#editor'), title: 'Write real code', text: 'This is real C++, the same kind you’d upload to a microcontroller. Start typing for <b>suggestions</b>, and hover any function to see what it does.' },
     { target: q('.run'), title: 'Run it', text: 'Press <b>Run</b> (or Ctrl/⌘ + Enter). The highlighted line shows what the board is doing right now. Mistakes get friendly explanations.' },
     { target: q('.tray'), title: 'Lessons and Sandbox', text: 'Work through the lessons and tick off each goal, or switch to <b>Sandbox</b> to build anything you like from the parts tray.' },
-  ], () => { saved.toured = true; save(); });
+  ], () => {
+    saved.toured = true;
+    tourActive = false;
+    save();
+    if (nova.enabled) {
+      nova.say('Nova here, your field engineer. I’ll brief you on each mission and jump in when something needs fixing. Click me any time to ask a question.', {
+        mood: 'cheer', actions: [{ label: 'Ask Nova', primary: true, run: () => nova.togglePanel(true) }, { label: 'Got it', run: () => {} }],
+      });
+    }
+  });
+  tourActive = true;
 }
 $('tour-again').onclick = () => startTour();
 
 // ---------- boot ----------
 applyTheme();
 applyQuality();
+applyInstructor();
 renderBadges();
 renderMute();
 renderProgress();

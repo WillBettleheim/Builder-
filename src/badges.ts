@@ -17,6 +17,7 @@ export const BADGES: Badge[] = [
   { id: 'debugger', icon: '🐞', name: 'Bug Hunter', how: 'Step through code one line at a time' },
   { id: 'plotter', icon: '📈', name: 'Data Scientist', how: 'Graph live data in the Plotter' },
   { id: 'inventor', icon: '💡', name: 'Inventor', how: 'Build a sandbox project with 6 or more parts' },
+  { id: 'curious', icon: '🙋', name: 'Curious Mind', how: 'Ask Nova a question' },
   { id: 'sharer', icon: '🔗', name: 'Show & Tell', how: 'Share a project link' },
   { id: 'maker', icon: '📋', name: 'Maker', how: 'Open the "Build it for real" sheet' },
 ];
