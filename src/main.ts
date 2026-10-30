@@ -1393,3 +1393,21 @@ window.addEventListener('hashchange', () => void openSharedFromUrl());
 if (import.meta.env.DEV) Object.assign(window, { world, editor });
 
 if (!saved.toured) setTimeout(startTour, 600);
+
+// works offline and can be installed as an app once it's been opened online
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  addEventListener('load', async () => {
+    try {
+      await navigator.serviceWorker.register('./sw.js');
+      await navigator.serviceWorker.ready;
+      // files loaded before the worker took over (scripts, styles, fonts) go in the cache now,
+      // so even the very first visit works offline next time
+      const urls = performance.getEntriesByType('resource').map(e => e.name)
+        .filter(u => u.startsWith(location.origin) || /fonts\.(googleapis|gstatic)\.com/.test(u));
+      const cache = await caches.open('builder-v1');
+      await Promise.all(urls.map(u => cache.add(u).catch(() => {})));
+    } catch {
+      // offline mode just isn't available here
+    }
+  });
+}
