@@ -11,6 +11,7 @@
 - **Debugging tools** — Serial Monitor, Serial Plotter, a logic-analyzer Pins view, live Variables, Pause and Step.
 - **Sandbox** — multiple saved projects, undo/redo, share-by-link, import/export, and a printable "Build it for real" sheet with a shopping list and wiring steps.
 - **Extras** — achievement badges, light/dark themes, graphics quality settings and a phone-friendly layout.
+- **Works offline** — installable as an app; after the first visit it runs without a connection.
 
 ## Run it
 
@@ -20,6 +21,16 @@ npm run dev
 ```
 
 Then open the URL Vite prints. `npm run build` produces a static site in `dist/` that can be hosted anywhere for free.
+
+```bash
+npm test
+```
+
+runs the test suite (interpreter, circuit solver, and every lesson's starter code, solution and quiz).
+
+## Deploy
+
+Every push to `main` is tested and built by GitHub Actions. To publish it on GitHub Pages, open the repo's **Settings → Pages** and set **Source** to **GitHub Actions** once; after that each push to `main` deploys automatically to `https://<user>.github.io/<repo>/`.
 
 ## Project layout
 
@@ -31,3 +42,5 @@ Then open the URL Vite prints. `npm run build` produces a static site in `dist/`
 | `src/ui/` | Code editor, docs, plotter, pin timeline, tour, build sheet |
 | `src/lessons.ts`, `src/quizzes.ts`, `src/badges.ts` | Course content |
 | `src/main.ts` | App shell tying it all together |
+| `src/test/` | Vitest test suite |
+| `public/` | App icons, web manifest and offline service worker |
