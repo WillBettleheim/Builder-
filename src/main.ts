@@ -1599,8 +1599,6 @@ setMode(mode);
 void openSharedFromUrl();
 window.addEventListener('hashchange', () => void openSharedFromUrl());
 
-if (import.meta.env.DEV) Object.assign(window, { world, editor });
-
 if (!saved.toured) setTimeout(startTour, 600);
 
 // works offline and can be installed as an app once it's been opened online
@@ -1619,4 +1617,14 @@ if (import.meta.env.PROD && 'serviceWorker' in navigator) {
       // offline mode just isn't available here
     }
   });
+}
+
+// dev-only handle for poking at the app from the console (stripped from production builds)
+if (import.meta.env.DEV) {
+  (window as any).__builder = {
+    world, editor, LESSONS, goLesson, run, stop,
+    get lesson() { return lesson; },
+    goals: () => saved.goals[lesson.id],
+    setGoals: (v: boolean[]) => (saved.goals[lesson.id] = v),
+  };
 }
