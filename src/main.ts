@@ -1612,7 +1612,13 @@ if (import.meta.env.PROD && 'serviceWorker' in navigator) {
       const urls = performance.getEntriesByType('resource').map(e => e.name)
         .filter(u => u.startsWith(location.origin) || /fonts\.(googleapis|gstatic)\.com/.test(u));
       const cache = await caches.open('builder-v1');
-      await Promise.all(urls.map(u => cache.add(u).catch(() => {})));
+      await Promise.all(urls.map(async u => {
+        try {
+          // skip misses that a host answered with the app page (e.g. Nova's optional photos)
+          const res = await fetch(u);
+          if (res.ok && !(res.headers.get('content-type') ?? '').includes('text/html')) await cache.put(u, res);
+        } catch { /* offline or blocked: just skip it */ }
+      }));
     } catch {
       // offline mode just isn't available here
     }

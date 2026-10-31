@@ -40,7 +40,9 @@ self.addEventListener('fetch', event => {
     caches.match(req).then(hit => {
       if (hit && url.pathname.includes('/assets/')) return hit; // content-hashed: never changes
       const fresh = fetch(req).then(res => {
-        if (res.ok || res.type === 'opaque') {
+        // hosts that answer missing files with the app page must not fill the cache with it
+        const isPage = (res.headers.get('content-type') ?? '').includes('text/html');
+        if ((res.ok && !isPage) || res.type === 'opaque') {
           const copy = res.clone();
           caches.open(CACHE).then(c => c.put(req, copy));
         }
