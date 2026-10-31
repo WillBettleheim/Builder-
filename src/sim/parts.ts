@@ -46,6 +46,7 @@ export interface UpdateCtx {
   dt: number;
   obstacles: THREE.Object3D[];
   audio: AudioOut;
+  parts: Part[];
 }
 
 export interface PartDef {
@@ -62,6 +63,8 @@ export interface PartDef {
   listener?(part: Part): PinListener;
   obstacle?: boolean;
   noPins?: boolean;
+  /** clicking the knob (without dragging) presses a built-in switch */
+  clickPress?: boolean;
   /** groups of terminal keys connected inside the part (breadboard strips) */
   nets?(part: Part): string[][];
   /** short live status line for the inspector */
@@ -1758,12 +1761,328 @@ const soil: PartDef = {
   readout: part => `Moisture ${part.props.moisture}% → analogRead() ≈ <b>${Math.round(1023 - part.props.moisture * 7)}</b>`,
 };
 
+// ---------- rotary encoder (KY-040) ----------
+// Quadrature: CLK and DT step through a Gray code; each click is two quarter-steps (one CLK change).
+const GRAY = [[0, 0], [0, 1], [1, 1], [1, 0]];
+
+const encoder: PartDef = {
+  type: 'encoder',
+  name: 'Rotary Encoder',
+  blurb: 'A knob that clicks round forever. It doesn’t give an angle; instead CLK and DT pulse in a pattern that tells you which way it turned. Drag it up/down to turn it, and click it to press its switch (SW, LOW when pressed).',
+  defaults: { turns: 0 },
+  knob: { key: 'turns', min: -9999, max: 9999, perPixel: 0.08 },
+  clickPress: true,
+  terminals: () => [
+    { key: 'gnd', label: 'GND', kind: 'GND', pos: [row(5, 0, 0.36), 0.5, -1.05] },
+    { key: 'vcc', label: '+', kind: '5V', pos: [row(5, 1, 0.36), 0.5, -1.05] },
+    { key: 'sw', label: 'SW', kind: 'signal', pos: [row(5, 2, 0.36), 0.5, -1.05] },
+    { key: 'dt', label: 'DT', kind: 'signal', pos: [row(5, 3, 0.36), 0.5, -1.05] },
+    { key: 'clk', label: 'CLK', kind: 'signal', pos: [row(5, 4, 0.36), 0.5, -1.05] },
+  ],
+  build() {
+    const g = new THREE.Group();
+    g.add(breadboard(2.4, 2.6));
+    g.add(at(box(2.0, 0.12, 2.0, mat('#1f4f9a'), 0.04), 0, 0.82, 0.2));
+    for (let i = 0; i < 5; i++) g.add(at(cyl(0.035, 0.035, 0.4, M.gold, 6), row(5, i, 0.36), 0.66, -0.9));
+    g.add(at(box(1.3, 0.6, 1.3, M.metal, 0.06), 0, 1.18, 0.2));
+    g.add(at(cyl(0.28, 0.28, 0.4, M.metal, 16), 0, 1.6, 0.2));
+    const knob = new THREE.Group();
+    knob.position.set(0, 1.8, 0.2);
+    const cap = cyl(0.62, 0.66, 0.75, mat('#24262b', { roughness: 0.5 }), 24);
+    cap.position.y = 0.37;
+    cap.userData.action = 'knob';
+    knob.add(cap);
+    for (let i = 0; i < 18; i++) {
+      const ridge = box(0.06, 0.6, 0.08, mat('#3a3d44'), 0);
+      const a = (i / 18) * Math.PI * 2;
+      ridge.position.set(Math.cos(a) * 0.64, 0.38, Math.sin(a) * 0.64);
+      ridge.rotation.y = -a;
+      ridge.userData.action = 'knob';
+      knob.add(ridge);
+    }
+    const mark = box(0.08, 0.04, 0.4, mat('#ffffff'), 0);
+    mark.position.set(0, 0.76, -0.3);
+    mark.userData.action = 'knob';
+    knob.add(mark);
+    g.add(knob);
+    g.userData.knob = knob;
+    return g;
+  },
+  update(part, board, ctx) {
+    // while stopped, turning just moves the knob: no phantom pulses at the next run
+    if (!ctx.running) part.state.q = -part.props.turns * 2;
+    const k = part.group!.userData.knob;
+    k.rotation.y = -(part.props.turns * Math.PI * 2) / 20; // 20 clicks per turn
+    k.position.y = part.state.pressed ? 1.7 : 1.8;
+    void board;
+  },
+  listener(part) {
+    return {
+      readDigital(pin, board) {
+        if (pin === part.pins.sw) return part.state.pressed ? 0 : 1;
+        if (pin !== part.pins.clk && pin !== part.pins.dt) return undefined;
+        const target = -part.props.turns * 2; // clockwise runs the Gray code backwards
+        part.state.q ??= target; // first read: start from where the knob is
+        const q = part.state.q;
+        // play queued quarter-steps out at most one per millisecond, so polling code sees every edge
+        if (q !== target && Math.abs(board.time - (part.state.lastStep ?? -99)) >= 1) {
+          part.state.q = q + Math.sign(target - q);
+          part.state.lastStep = board.time;
+        }
+        const [clk, dt] = GRAY[(((part.state.q ?? target) % 4) + 4) % 4];
+        return pin === part.pins.clk ? clk : dt;
+      },
+    };
+  },
+  readout: part => `Turned <b>${part.props.turns}</b> clicks${part.state.pressed ? ' · <b>pressed</b>' : ''}`,
+};
+
+// ---------- 8×8 LED matrix (MAX7219) ----------
+const matrix: PartDef = {
+  type: 'matrix',
+  name: 'LED Matrix 8×8',
+  blurb: '64 red LEDs in a grid, driven by a MAX7219 chip so 3 data pins control them all. Use the LedControl library: lc.shutdown(0, false) to wake it, then lc.setLed(0, row, col, true) or lc.setRow(0, row, B01100110).',
+  terminals: () => [
+    { key: 'vcc', label: 'VCC', kind: '5V', pos: [-2.3, 0.62, row(5, 0, 0.36)] },
+    { key: 'gnd', label: 'GND', kind: 'GND', pos: [-2.3, 0.62, row(5, 1, 0.36)] },
+    { key: 'din', label: 'DIN', kind: 'signal', pos: [-2.3, 0.62, row(5, 2, 0.36)] },
+    { key: 'cs', label: 'CS', kind: 'signal', pos: [-2.3, 0.62, row(5, 3, 0.36)] },
+    { key: 'clk', label: 'CLK', kind: 'signal', pos: [-2.3, 0.62, row(5, 4, 0.36)] },
+  ],
+  build() {
+    const g = new THREE.Group();
+    for (const [x, z] of [[-1.9, -1.9], [1.9, -1.9], [-1.9, 1.9], [1.9, 1.9]]) g.add(at(cyl(0.1, 0.1, 0.4, M.dark, 8), x, 0.2, z));
+    g.add(at(box(4.6, 0.12, 4.2, mat('#1c4fa0'), 0.05), 0, 0.46, 0));
+    for (let i = 0; i < 5; i++) g.add(at(cyl(0.035, 0.035, 0.3, M.gold, 6), -2.3, 0.6, row(5, i, 0.36)));
+    g.add(at(box(3.4, 0.7, 3.4, mat('#141417', { roughness: 0.4 }), 0.04), 0.3, 0.87, 0));
+    const dots: THREE.MeshStandardMaterial[] = [];
+    const glows: THREE.Sprite[] = [];
+    for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
+      const m = new THREE.MeshStandardMaterial({ color: '#3a1412', emissive: new THREE.Color('#ff2a1a'), emissiveIntensity: 0, roughness: 0.3 });
+      const x = 0.3 - 1.4 + c * 0.4, z = -1.4 + r * 0.4;
+      const d = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 0.04, 14), m);
+      d.position.set(x, 1.23, z);
+      g.add(d);
+      dots.push(m);
+      const s = glowSprite('#ff3322', 0.9);
+      s.position.set(x, 1.32, z);
+      g.add(s);
+      glows.push(s);
+    }
+    g.userData.matrix = { dots, glows };
+    return g;
+  },
+  update(part, board, ctx) {
+    const key = [part.pins.din, part.pins.clk, part.pins.cs].join(',');
+    const data = ctx.running ? board.matrices.get(key) : undefined;
+    const { dots, glows } = part.group!.userData.matrix;
+    const level = data && !data.shutdown ? 0.35 + (data.intensity / 15) * 0.65 : 0;
+    let lit = 0, sig = 0;
+    for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
+      const on = !!data && ((data.rows[r] >> (7 - c)) & 1) === 1;
+      const v = on ? level : 0;
+      if (v) { lit++; sig = (sig * 31 + r * 8 + c) >>> 0; }
+      dots[r * 8 + c].emissiveIntensity = v * 6;
+      (glows[r * 8 + c].material as THREE.SpriteMaterial).opacity = v * 0.7;
+    }
+    part.state.lit = lit;
+    part.state.sig = sig;
+  },
+  readout: part => `<b>${part.state.lit ?? 0}</b> of 64 LEDs lit`,
+};
+
+// ---------- Hall effect sensor and a magnet to find ----------
+const hall: PartDef = {
+  type: 'hall',
+  name: 'Hall Sensor',
+  blurb: 'Senses magnets. OUT reads LOW when a magnet is close (within about 5 cm) and HIGH otherwise. Drag the magnet near it! Used in bike speedometers, door alarms and laptop lids.',
+  terminals: () => [
+    { key: 'gnd', label: 'GND', kind: 'GND', pos: [row(3, 0, 0.45), 0.5, -0.95] },
+    { key: 'vcc', label: 'VCC', kind: '5V', pos: [row(3, 1, 0.45), 0.5, -0.95] },
+    { key: 'out', label: 'OUT', kind: 'signal', pos: [row(3, 2, 0.45), 0.5, -0.95] },
+  ],
+  build() {
+    const g = new THREE.Group();
+    g.add(breadboard(2.0, 2.2));
+    g.add(at(box(1.6, 0.12, 1.5, mat('#1f4f9a'), 0.04), 0, 0.82, 0.1));
+    for (let i = 0; i < 3; i++) g.add(at(cyl(0.035, 0.035, 0.4, M.gold, 6), row(3, i, 0.45), 0.66, -0.8));
+    g.add(at(box(0.5, 0.2, 0.36, mat('#18191d'), 0.03), 0, 0.98, 0.55));
+    for (const x of [-0.12, 0, 0.12]) g.add(at(cyl(0.025, 0.025, 0.3, M.leg, 6), x, 0.98, 0.3));
+    const ledMat = mat('#ff5040', { emissive: new THREE.Color('#ff2010'), emissiveIntensity: 0 });
+    g.add(at(box(0.2, 0.1, 0.14, ledMat, 0.02), -0.5, 0.94, -0.25));
+    g.userData.led = ledMat;
+    return g;
+  },
+  update(part, _board, ctx) {
+    const here = part.group!.position;
+    const near = ctx.parts.some(p => p.type === 'magnet' && p.group && p.group.position.distanceTo(here) < 5);
+    part.state.near = near;
+    part.group!.userData.led.emissiveIntensity = ctx.running && near ? 5 : 0;
+  },
+  listener(part) {
+    return { readDigital: pin => (pin === part.pins.out ? (part.state.near ? 0 : 1) : undefined) };
+  },
+  readout: part => (part.state.near ? '<b>Magnet detected</b> (OUT is LOW)' : 'No magnet nearby. Drag the magnet closer.'),
+};
+
+const magnet: PartDef = {
+  type: 'magnet',
+  name: 'Magnet',
+  blurb: 'A bar magnet. Drag it near the Hall sensor to trigger it.',
+  noPins: true,
+  terminals: () => [],
+  build() {
+    const g = new THREE.Group();
+    const n = at(box(1.6, 0.9, 1.1, mat('#d6403a', { roughness: 0.35 }), 0.12), -0.8, 0.45, 0);
+    const sPole = at(box(1.6, 0.9, 1.1, mat('#2f6fd0', { roughness: 0.35 }), 0.12), 0.8, 0.45, 0);
+    g.add(n, sPole);
+    const label = (text: string, x: number) => {
+      const t = textTexture([{ text, x: 64, y: 64, size: 88, weight: '800' }], 128, 128, 'rgba(0,0,0,0)');
+      const p = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.7), new THREE.MeshBasicMaterial({ map: t, transparent: true }));
+      p.rotation.x = -Math.PI / 2;
+      p.position.set(x, 0.91, 0);
+      g.add(p);
+    };
+    label('N', -0.8);
+    label('S', 0.8);
+    return g;
+  },
+};
+
+// ---------- sound sensor (KY-037) ----------
+const sound: PartDef = {
+  type: 'sound',
+  name: 'Sound Sensor',
+  blurb: 'A microphone that measures loudness. AO gives a level on analogRead(); DO goes HIGH when it’s louder than the threshold. Click the microphone to clap!',
+  defaults: { noise: 15, threshold: 600 },
+  props: [
+    { key: 'noise', label: 'Background noise', type: 'range', min: 0, max: 100, step: 1, unit: '%' },
+    { key: 'threshold', label: 'DO threshold (the blue screw)', type: 'range', min: 100, max: 1000, step: 10 },
+  ],
+  terminals: () => [
+    { key: 'ao', label: 'AO', kind: 'signal', analog: true, pos: [row(4, 0, 0.4), 0.5, -1.05] },
+    { key: 'gnd', label: 'GND', kind: 'GND', pos: [row(4, 1, 0.4), 0.5, -1.05] },
+    { key: 'vcc', label: '+', kind: '5V', pos: [row(4, 2, 0.4), 0.5, -1.05] },
+    { key: 'do', label: 'DO', kind: 'signal', pos: [row(4, 3, 0.4), 0.5, -1.05] },
+  ],
+  build() {
+    const g = new THREE.Group();
+    g.add(breadboard(2.6, 2.6));
+    g.add(at(box(2.2, 0.12, 2.0, mat('#1f4f9a'), 0.04), 0, 0.82, 0.15));
+    for (let i = 0; i < 4; i++) g.add(at(cyl(0.035, 0.035, 0.4, M.gold, 6), row(4, i, 0.4), 0.66, -0.9));
+    const mic = cyl(0.5, 0.5, 0.5, M.metal, 28);
+    mic.position.set(0.3, 1.13, 0.55);
+    mic.userData.action = 'press';
+    g.add(mic);
+    const grille = cyl(0.42, 0.42, 0.02, mat('#2b2c31', { roughness: 0.9 }), 28);
+    grille.position.set(0.3, 1.39, 0.55);
+    grille.userData.action = 'press';
+    g.add(grille);
+    g.add(at(box(0.45, 0.4, 0.45, mat('#2f6fd0'), 0.04), -0.6, 1.08, 0.3));
+    g.add(at(cyl(0.12, 0.12, 0.06, M.metal, 12), -0.6, 1.3, 0.3));
+    const ledMat = mat('#ff5040', { emissive: new THREE.Color('#ff2010'), emissiveIntensity: 0 });
+    g.add(at(box(0.18, 0.1, 0.12, ledMat, 0.02), -0.8, 0.94, -0.3));
+    const rings: THREE.Mesh[] = [];
+    for (let i = 0; i < 3; i++) {
+      const r = new THREE.Mesh(new THREE.TorusGeometry(0.7, 0.035, 8, 40), new THREE.MeshBasicMaterial({ color: '#7fe6dd', transparent: true, opacity: 0 }));
+      r.rotation.x = Math.PI / 2;
+      r.position.set(0.3, 1.5, 0.55);
+      g.add(r);
+      rings.push(r);
+    }
+    g.userData.sound = { ledMat, rings };
+    return g;
+  },
+  update(part, _board, ctx) {
+    const now = performance.now();
+    if (part.state.pressed && !part.state.wasPressed) part.state.clapAt = now;
+    part.state.wasPressed = part.state.pressed;
+    const t = (now - (part.state.clapAt ?? -1e9)) / 1000;
+    part.state.clap = t < 0.3;
+    part.state.level = Math.round(70 + part.props.noise * 3 + (part.state.clap ? 850 * (1 - t / 0.3) : 0));
+    const { ledMat, rings } = part.group!.userData.sound;
+    ledMat.emissiveIntensity = ctx.running && part.state.level > part.props.threshold ? 5 : 0;
+    rings.forEach((r: THREE.Mesh, i: number) => {
+      const p = Math.min(1, t * 1.8 + i * 0.12);
+      r.scale.setScalar(0.6 + p * 2.2);
+      (r.material as THREE.MeshBasicMaterial).opacity = t < 0.6 ? (1 - p) * 0.8 : 0;
+    });
+  },
+  listener(part) {
+    const level = () => (part.state.level ?? 70) + (Math.random() - 0.5) * (6 + part.props.noise * 0.8);
+    return {
+      readAnalog: pin => (pin === part.pins.ao ? level() : undefined),
+      readDigital: pin => (pin === part.pins.do ? (level() > part.props.threshold ? 1 : 0) : undefined),
+    };
+  },
+  readout: part => `Loudness ≈ <b>${part.state.level ?? 70}</b>${part.state.clap ? ' 👏' : ''}. Click the mic to clap`,
+};
+
+// ---------- gas / smoke sensor (MQ-2) ----------
+const gas: PartDef = {
+  type: 'gas',
+  name: 'Gas Sensor (MQ-2)',
+  blurb: 'Detects smoke and flammable gas. AO rises with the gas level; DO goes LOW when it passes the threshold. Drag it up/down to change the amount of smoke around it.',
+  defaults: { gas: 5 },
+  props: [{ key: 'gas', label: 'Smoke / gas level', type: 'range', min: 0, max: 100, step: 1, unit: '%' }],
+  knob: { key: 'gas', min: 0, max: 100, perPixel: 0.5 },
+  terminals: () => [
+    { key: 'vcc', label: 'VCC', kind: '5V', pos: [row(4, 0, 0.4), 0.5, -1.15] },
+    { key: 'gnd', label: 'GND', kind: 'GND', pos: [row(4, 1, 0.4), 0.5, -1.15] },
+    { key: 'do', label: 'DO', kind: 'signal', pos: [row(4, 2, 0.4), 0.5, -1.15] },
+    { key: 'ao', label: 'AO', kind: 'signal', analog: true, pos: [row(4, 3, 0.4), 0.5, -1.15] },
+  ],
+  build() {
+    const g = new THREE.Group();
+    g.add(breadboard(2.6, 2.8));
+    g.add(at(box(2.2, 0.12, 2.2, mat('#1f4f9a'), 0.04), 0, 0.82, 0.1));
+    for (let i = 0; i < 4; i++) g.add(at(cyl(0.035, 0.035, 0.4, M.gold, 6), row(4, i, 0.4), 0.66, -1.0));
+    const body = cyl(0.85, 0.85, 0.9, mat('#c9ccd2', { metalness: 0.6, roughness: 0.4 }), 32);
+    body.position.set(0, 1.33, 0.25);
+    body.userData.action = 'knob';
+    g.add(body);
+    const meshMat = new THREE.MeshStandardMaterial({ color: '#8c8f96', roughness: 0.9, emissive: new THREE.Color('#ff7a2a'), emissiveIntensity: 0 });
+    const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.85, 0.3, 32), meshMat);
+    cap.position.set(0, 1.93, 0.25);
+    cap.userData.action = 'knob';
+    g.add(cap);
+    const puffs: THREE.Mesh[] = [];
+    for (let i = 0; i < 6; i++) {
+      const p = new THREE.Mesh(new THREE.SphereGeometry(0.5, 12, 10), new THREE.MeshStandardMaterial({ color: '#b9bcc2', transparent: true, opacity: 0, roughness: 1, depthWrite: false }));
+      g.add(p);
+      puffs.push(p);
+    }
+    g.userData.gas = { meshMat, puffs };
+    return g;
+  },
+  update(part, _board, ctx) {
+    const v = part.props.gas / 100;
+    const { meshMat, puffs } = part.group!.userData.gas;
+    meshMat.emissiveIntensity = ctx.running ? 0.35 : 0; // the heater glows while powered
+    const t = performance.now() / 1000;
+    puffs.forEach((p: THREE.Mesh, i: number) => {
+      const phase = (t * 0.25 + i / puffs.length) % 1;
+      p.position.set(Math.sin(i * 2.1 + t * 0.6) * (0.4 + phase), 1.2 + phase * 4, 0.25 + Math.cos(i * 1.7) * 0.6 * phase);
+      p.scale.setScalar(0.6 + phase * 1.8);
+      (p.material as THREE.MeshStandardMaterial).opacity = Math.max(0, v - 0.15) * (1 - phase) * 0.55;
+    });
+  },
+  listener(part) {
+    const ao = () => 90 + part.props.gas * 8.5 + (Math.random() - 0.5) * 8;
+    return {
+      readAnalog: pin => (pin === part.pins.ao ? ao() : undefined),
+      readDigital: pin => (pin === part.pins.do ? (ao() > 400 ? 0 : 1) : undefined),
+    };
+  },
+  readout: part => `Gas ${part.props.gas}% → analogRead() ≈ <b>${Math.round(90 + part.props.gas * 8.5)}</b>`,
+};
+
 export const PARTS: Record<string, PartDef> = Object.fromEntries(
-  [uno, led, rgbLed, button, pot, ldr, tmp36, buzzer, ultrasonic, servo, motor, trafficLight, car, lcd, sevenSeg, pir, joystick, neopixel, bigBreadboard, relay, dht11, oled, stepper, keypad, soil].map(d => [d.type, d]),
+  [uno, led, rgbLed, button, pot, ldr, tmp36, buzzer, ultrasonic, servo, motor, trafficLight, car, lcd, sevenSeg, pir, joystick, neopixel, bigBreadboard, relay, dht11, oled, stepper, keypad, soil, encoder, matrix, hall, magnet, sound, gas].map(d => [d.type, d]),
 );
 
 /** Parts shown in the sandbox palette, in order. */
-export const PALETTE = ['breadboard', 'led', 'rgb', 'button', 'keypad', 'pot', 'joystick', 'ldr', 'temp', 'dht', 'soil', 'pir', 'buzzer', 'ultrasonic', 'servo', 'stepper', 'motor', 'relay', 'traffic', 'seg7', 'lcd', 'oled', 'neopixel', 'car'];
+export const PALETTE = ['breadboard', 'led', 'rgb', 'button', 'keypad', 'pot', 'encoder', 'joystick', 'ldr', 'temp', 'dht', 'soil', 'gas', 'sound', 'hall', 'pir', 'buzzer', 'ultrasonic', 'servo', 'stepper', 'motor', 'relay', 'traffic', 'seg7', 'lcd', 'oled', 'matrix', 'neopixel', 'magnet', 'car'];
 
 let idCounter = 0;
 export function newPart(type: string, init: Partial<Part> = {}): Part {
