@@ -79,6 +79,7 @@ const statusEl = $('status');
 const world = new World(stage);
 const editor = new CodeEditor($('editor'));
 const nova = new Instructor(stage);
+nova.usePhotos('./nova'); // realistic renders, if public/nova/*.png are present
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 let mode: 'lessons' | 'sandbox' = saved.mode;

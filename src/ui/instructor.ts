@@ -20,6 +20,8 @@ export class Instructor {
   private log: HTMLElement;
   private input: HTMLInputElement;
   private hideTimer = 0;
+  private photos: Partial<Record<Mood, string>> = {};
+  private photo: HTMLImageElement | null = null;
   private talkTimer = 0;
 
   constructor(host: HTMLElement) {
@@ -136,13 +138,46 @@ export class Instructor {
     let n = 0;
     this.root.classList.add('talking');
     this.talkTimer = window.setInterval(() => {
-      this.svg.dataset.mood = n % 2 ? 'talk' : mood === 'talk' ? 'happy' : mood;
+      this.setMood(n % 2 ? 'talk' : mood === 'talk' ? 'happy' : mood);
       if (++n > 7) {
         clearInterval(this.talkTimer);
-        this.svg.dataset.mood = mood === 'talk' ? 'happy' : mood;
+        this.setMood(mood === 'talk' ? 'happy' : mood);
         this.root.classList.remove('talking');
       }
     }, 150);
+  }
+
+  private setMood(mood: Mood) {
+    this.svg.dataset.mood = mood;
+    if (this.photo) {
+      // photos come in four moods; the others borrow the closest one
+      const pick = this.photos[mood] ?? this.photos[mood === 'cheer' || mood === 'wow' ? 'happy' : 'think'] ?? this.photos.happy!;
+      if (this.photo.getAttribute('src') !== pick) this.photo.src = pick;
+    }
+  }
+
+  /**
+   * Use realistic renders instead of the drawing when they exist: <base>/happy.png (required),
+   * plus optional talk.png, think.png and concern.png. Missing files just keep the drawing.
+   */
+  usePhotos(base: string) {
+    const moods: Mood[] = ['happy', 'talk', 'think', 'concern'];
+    for (const m of moods) {
+      const url = `${base}/${m}.png`;
+      const img = new Image();
+      img.onload = () => {
+        this.photos[m] = url;
+        if (m === 'happy' && !this.photo) {
+          this.photo = document.createElement('img');
+          this.photo.alt = '';
+          this.photo.src = url;
+          const fig = this.root.querySelector('.ins-figure')!;
+          fig.classList.add('photo-mode');
+          fig.appendChild(this.photo);
+        }
+      };
+      img.src = url;
+    }
   }
 
   private addMessage(who: 'nova' | 'you', html: string, actions?: InstructorAction[]) {
