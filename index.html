@@ -114,6 +114,14 @@
             <div class="sch-body" id="schematic-body"></div>
             <div class="sch-legend"><span><svg viewBox="0 0 20 22" width="14" height="15"><path d="M10 20V6M2 6h16" stroke="#e2533b" stroke-width="2" fill="none"/></svg> 5V</span><span><svg viewBox="0 0 20 22" width="14" height="15"><path d="M10 2v9M1 11h18M4 15h12M7 19h6" stroke="currentColor" stroke-width="2" fill="none"/></svg> GND</span><span><svg viewBox="0 0 18 4" width="18" height="4"><path d="M0 2h18" stroke="currentColor" stroke-width="2"/></svg> signal</span><span><svg viewBox="0 0 18 4" width="18" height="4"><path d="M0 2h18" stroke="#e2533b" stroke-width="3"/></svg> HIGH</span></div>
           </div>
+          <div class="phone" id="phone" hidden>
+            <div class="phone-screen">
+              <div class="phone-bar"><span>9:41</span><span class="phone-title"><i></i> HC-05</span><button id="phone-close" aria-label="Close phone app">×</button></div>
+              <div class="phone-log" id="phone-log" aria-live="polite"></div>
+              <div class="phone-quick"><button data-send="1">1</button><button data-send="0">0</button><button data-send="ON">ON</button><button data-send="OFF">OFF</button></div>
+              <form class="phone-form" id="phone-form"><input id="phone-input" placeholder="Message" autocomplete="off" aria-label="Message to send"><button aria-label="Send">➤</button></form>
+            </div>
+          </div>
           <div class="meter card" id="meter" hidden>
             <div class="meter-head"><b>Multimeter</b><button class="mini ghost icon" id="meter-close" aria-label="Close multimeter">×</button></div>
             <div class="meter-lcd" aria-live="polite"><span id="meter-value">0.00</span><small id="meter-unit">V</small></div>

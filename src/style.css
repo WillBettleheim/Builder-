@@ -772,3 +772,27 @@ body.instructor-on .guide { max-height: calc(100% - 40px); }
 .sch-legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 8px; font-size: 11.5px; color: var(--ink-2); }
 .sch-legend span { display: inline-flex; align-items: center; gap: 5px; }
 @media (max-width: 1000px) { .schematic-pop { inset: 8px 8px auto; height: calc(56vh - 60px); } }
+
+/* phone app for the Bluetooth module */
+.phone {
+  position: absolute; right: 16px; top: 16px; z-index: 7; width: 230px; height: min(430px, calc(100% - 90px));
+  padding: 8px; border-radius: 30px; background: #111214; box-shadow: 0 20px 40px -14px rgba(0, 0, 0, 0.6), inset 0 0 0 2px #2c2e33;
+}
+.phone-screen { display: flex; flex-direction: column; height: 100%; border-radius: 23px; overflow: hidden; background: #f3f4f6; color: #16181d; }
+.phone-bar { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px 6px; font: 600 11px var(--mono); background: #fff; border-bottom: 1px solid #e3e5e9; }
+.phone-title { display: inline-flex; align-items: center; gap: 5px; }
+.phone-title i { width: 7px; height: 7px; border-radius: 50%; background: #34c759; }
+.phone-bar button { border: 0; background: none; font-size: 16px; line-height: 1; color: #6b7280; }
+.phone-log { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+.ph-msg { margin: 0; max-width: 82%; padding: 6px 10px; border-radius: 14px; font-size: 12.5px; word-break: break-word; }
+.ph-msg.me { align-self: flex-end; background: #1f9e95; color: #fff; border-bottom-right-radius: 4px; }
+.ph-msg.them { align-self: flex-start; background: #fff; border: 1px solid #e3e5e9; border-bottom-left-radius: 4px; font-family: var(--mono); }
+.ph-note { margin: 2px 0; text-align: center; font-size: 11px; color: #6b7280; }
+.phone-quick { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; padding: 6px 8px 0; }
+.phone-quick button { border: 1px solid #d5d8de; border-radius: 9px; background: #fff; padding: 5px 0; font: 600 12px var(--mono); color: #16181d; }
+.phone-form { display: flex; gap: 6px; padding: 8px; }
+.phone-form input { flex: 1; min-width: 0; border: 1px solid #d5d8de; border-radius: 16px; padding: 6px 10px; font-size: 12.5px; background: #fff; color: #16181d; }
+.phone-form button { width: 32px; border: 0; border-radius: 50%; background: #1f9e95; color: #fff; }
+.sd-file { margin-top: 4px; }
+.sd-file pre { margin: 4px 0 0; max-height: 110px; overflow: auto; padding: 6px 8px; border-radius: 6px; background: var(--paper); font-size: 11px; }
+@media (max-width: 1000px) { .phone { top: 8px; right: 8px; height: calc(56vh - 70px); width: 200px; } }

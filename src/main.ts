@@ -342,6 +342,7 @@ world.onFrame = dt => {
   // the meter follows live pin changes, a few times a second like a real one
   if (!meterEl.hidden && performance.now() - meterAt > 120) { meterAt = performance.now(); updateMeter(); }
   updateSchematic();
+  updatePhone();
   plotter.draw();
   if (plotter.visible && plotter.hasData && running) award('plotter');
   if (running && !paused) timeline.record(world.board, pinTracks());
@@ -394,6 +395,67 @@ function updateMeter() {
   if (red && black && meterMode === 'volts' && r.display !== '- - -') award('meter');
 }
 world.onProbe = updateMeter;
+
+// ---------- phone app for the Bluetooth module ----------
+const phoneEl = $('phone');
+const phoneLog = $('phone-log');
+const phoneBt = () => world.parts.find(p => p.type === 'bluetooth');
+let phoneSeen = { part: '', len: 0, partial: '' };
+
+function setPhone(on: boolean) {
+  phoneEl.hidden = !on;
+  const bt = phoneBt();
+  if (bt) bt.state.paired = on;
+  if (on) { world.select(null); renderPhone(); $<HTMLInputElement>('phone-input').focus(); } // the phone takes the inspector's place
+}
+$('phone-close').onclick = () => setPhone(false);
+
+function phoneSend(text: string) {
+  const bt = phoneBt();
+  if (!bt || !text) return;
+  (bt.state.log ??= []).push({ me: true, text });
+  // like most Bluetooth terminal apps, each message ends with a new line
+  if (running) for (const ch of text + '\n') (bt.state.inbox ??= []).push(ch.charCodeAt(0));
+  else bt.state.log.push({ note: 'The board isn’t running, so nothing received that. Press Run first.' });
+  renderPhone();
+}
+$('phone-form').addEventListener('submit', e => {
+  e.preventDefault();
+  const input = $<HTMLInputElement>('phone-input');
+  phoneSend(input.value);
+  input.value = '';
+});
+phoneEl.querySelector('.phone-quick')!.addEventListener('click', e => {
+  const b = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-send]');
+  if (b) phoneSend(b.dataset.send!);
+});
+
+/** Turn new text from the board into chat bubbles, one per line. */
+function updatePhone() {
+  if (phoneEl.hidden) return;
+  const bt = phoneBt();
+  if (!bt) { setPhone(false); return; }
+  bt.state.paired = true;
+  if (phoneSeen.part !== bt.id) phoneSeen = { part: bt.id, len: 0, partial: '' }; // show everything sent since this run started
+  const all: string = bt.state.fromBoard ?? '';
+  if (all.length < phoneSeen.len) phoneSeen.len = 0; // the buffer was trimmed
+  if (all.length === phoneSeen.len) return;
+  const lines = (phoneSeen.partial + all.slice(phoneSeen.len)).split('\n');
+  phoneSeen.len = all.length;
+  phoneSeen.partial = lines.pop()!;
+  for (const l of lines) (bt.state.log ??= []).push({ me: false, text: l.replace(/\r$/, '') });
+  renderPhone();
+}
+
+function renderPhone() {
+  const bt = phoneBt();
+  const log: { me?: boolean; text?: string; note?: string }[] = (bt?.state.log ?? []).slice(-60);
+  if (bt) bt.state.log = log;
+  phoneLog.innerHTML = log.length
+    ? log.map(m => (m.note ? `<p class="ph-note">${esc(m.note)}</p>` : `<p class="ph-msg ${m.me ? 'me' : 'them'}">${esc(m.text ?? '') || '&nbsp;'}</p>`)).join('')
+    : '<p class="ph-note">Paired with the HC-05. Send a message, or tap a quick button.</p>';
+  phoneLog.scrollTop = phoneLog.scrollHeight;
+}
 
 // ---------- schematic ----------
 const schematicEl = $('schematic');
@@ -978,6 +1040,8 @@ function renderInspector() {
   const live = liveReadout(part);
   if (live) html += `<div class="live" data-live>${live}</div>`;
   html += `<div class="row">
+    ${part.type === 'bluetooth' ? '<button class="mini primary" data-act="phone">📱 Open phone app</button>' : ''}
+    ${part.type === 'sdcard' ? '<button class="mini" data-act="sd-erase">Erase card</button>' : ''}
     <button class="mini" data-act="rotate">Rotate <kbd>R</kbd></button>
     ${canDelete ? `<button class="mini danger" data-act="delete">Remove</button>` : ''}
   </div>`;
@@ -1082,6 +1146,8 @@ inspectorEl.addEventListener('click', e => {
   if (act === 'close') world.select(null);
   if (act === 'rotate') world.rotatePart(part);
   if (act === 'delete') world.removePart(part);
+  if (act === 'phone') setPhone(true);
+  if (act === 'sd-erase') { part.props.files = {}; save(); }
   if (act === 'connect' && world.uno) {
     const term = PARTS[part.type].terminals(part).find(t => t.key === el.dataset.key)!;
     world.addWire(endpoint(world.uno.id, term.kind === '5V' ? '5V' : nearestGround(part, world.uno)), endpoint(part.id, term.key));
@@ -1164,6 +1230,7 @@ const PART_CATEGORIES: Record<string, string[]> = {
   Sensors: ['ldr', 'temp', 'dht', 'soil', 'gas', 'sound', 'hall', 'pir', 'ultrasonic'],
   Displays: ['seg7', 'digits', 'lcd', 'oled', 'matrix'],
   Motion: ['servo', 'stepper', 'motor', 'relay', 'buzzer'],
+  Connect: ['bluetooth', 'sdcard'],
   Other: ['breadboard', 'magnet', 'car'],
 };
 const partFilter = { text: '', cat: 'All' };
@@ -1230,7 +1297,6 @@ function openLesson(l: Lesson, fresh = false) {
   lastProgress = Date.now();
   if (!tourActive) setTimeout(() => { if (lesson === l && mode === 'lessons') novaLessonIntro(); }, 900);
 }
-  Connect: ['bluetooth', 'sdcard'],
 
 function openSandbox() {
   stop();
@@ -1413,6 +1479,7 @@ window.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     if (world.isWiring) world.cancelWiring();
     else if (!schematicEl.hidden) setSchematic(false);
+    else if (!phoneEl.hidden) setPhone(false);
     else if (!meterEl.hidden) setMeter(false);
     else world.select(null);
     $('help-pop').hidden = true;
