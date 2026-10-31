@@ -2119,12 +2119,341 @@ const gas: PartDef = {
   readout: part => `Gas ${part.props.gas}% → analogRead() ≈ <b>${Math.round(90 + part.props.gas * 8.5)}</b>`,
 };
 
+// ---------- IR receiver with its remote control ----------
+/** The common 21-button NEC remote: label and the command byte it sends. */
+export const IR_KEYS: [string, number][] = [
+  ['CH−', 0x45], ['CH', 0x46], ['CH+', 0x47], ['⏮', 0x44], ['⏭', 0x40], ['⏯', 0x43], ['−', 0x07], ['+', 0x15], ['EQ', 0x09],
+  ['0', 0x16], ['100+', 0x19], ['200+', 0x0d], ['1', 0x0c], ['2', 0x18], ['3', 0x5e], ['4', 0x08], ['5', 0x1c], ['6', 0x5a], ['7', 0x42], ['8', 0x52], ['9', 0x4a],
+];
+const hex2 = (n: number) => `0x${n.toString(16).toUpperCase().padStart(2, '0')}`;
+
+const irRemote: PartDef = {
+  type: 'ir',
+  name: 'IR Receiver + Remote',
+  blurb: 'An infrared receiver and a TV-style remote. Click a remote button: the receiver picks up its code. Use the IRremote library: IrReceiver.begin(pin), IrReceiver.decode(), IrReceiver.decodedIRData.command, IrReceiver.resume().',
+  terminals: () => [
+    { key: 'sig', label: 'Signal (OUT)', kind: 'signal', pos: [row(3, 0), 0.62, -0.75] },
+    { key: 'gnd', label: 'GND', kind: 'GND', pos: [row(3, 1), 0.62, -0.75] },
+    { key: 'vcc', label: 'VCC', kind: '5V', pos: [row(3, 2), 0.62, -0.75] },
+  ],
+  build() {
+    const g = new THREE.Group();
+    // receiver module
+    g.add(at(box(1.7, 0.12, 1.5, mat('#1d4fa0'), 0.04), 0, 0.5, -0.1));
+    for (const [x, z] of [[-0.7, -0.7], [0.7, -0.7], [-0.7, 0.5], [0.7, 0.5]]) g.add(at(cyl(0.06, 0.06, 0.5, M.dark, 6), x, 0.25, z));
+    for (let i = 0; i < 3; i++) g.add(at(cyl(0.035, 0.035, 0.3, M.gold, 6), row(3, i), 0.66, -0.75));
+    const domeMat = new THREE.MeshPhysicalMaterial({ color: '#141418', roughness: 0.25, clearcoat: 0.8 });
+    g.add(at(box(0.62, 0.7, 0.5, domeMat, 0.06), 0, 0.92, 0.2));
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(0.24, 18, 12, 0, Math.PI * 2, 0, Math.PI / 2), domeMat);
+    dome.rotation.x = Math.PI / 2;
+    dome.position.set(0, 0.98, 0.46);
+    g.add(dome);
+    const recvLed = makeLed('#ff3b30');
+    recvLed.group.scale.setScalar(0.45);
+    recvLed.group.position.set(0.55, 0.56, 0.35);
+    g.add(recvLed.group);
+    // the remote, lying in front of the receiver
+    const remote = new THREE.Group();
+    remote.position.set(0, 0, 4.4);
+    remote.rotation.y = 0.08;
+    remote.add(at(box(2.3, 0.4, 5.6, mat('#1b1c20', { roughness: 0.6 }), 0.18), 0, 0.2, 0));
+    const c = document.createElement('canvas');
+    c.width = 230;
+    c.height = 560;
+    const ctx = c.getContext('2d')!;
+    ctx.fillStyle = '#1b1c20';
+    ctx.fillRect(0, 0, c.width, c.height);
+    ctx.fillStyle = '#3a1418';
+    ctx.fillRect(85, 16, 60, 14);
+    const keyXY = (i: number) => [-0.62 + (i % 3) * 0.62, -2.0 + Math.floor(i / 3) * 0.62 + 0.35] as const;
+    IR_KEYS.forEach(([label], i) => {
+      const [x, z] = keyXY(i);
+      const px = (x + 1.15) * 100, pz = (z + 2.8) * 100;
+      ctx.fillStyle = i < 3 ? '#b8322c' : i < 9 ? '#2f5fa8' : '#3a3c44';
+      ctx.beginPath();
+      ctx.arc(px, pz, 24, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.font = `600 ${label.length > 2 ? 15 : 20}px "IBM Plex Mono", monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, px, pz + 1);
+    });
+    const faceTex = new THREE.CanvasTexture(c);
+    faceTex.colorSpace = THREE.SRGBColorSpace;
+    faceTex.anisotropy = 8;
+    const face = new THREE.Mesh(new THREE.PlaneGeometry(2.3, 5.6), new THREE.MeshStandardMaterial({ map: faceTex, roughness: 0.5 }));
+    face.rotation.x = -Math.PI / 2;
+    face.position.y = 0.41;
+    remote.add(face);
+    const keys: THREE.Mesh[] = [];
+    IR_KEYS.forEach((_, i) => {
+      const [x, z] = keyXY(i);
+      // a see-through cap over each printed button: it catches the click and lights when pressed
+      const key = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 0.1, 20), new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0, depthWrite: false }));
+      key.position.set(x, 0.46, z);
+      key.userData.action = 'press';
+      key.userData.keyIndex = i;
+      remote.add(key);
+      keys.push(key);
+    });
+    const tip = makeLed('#ff3b30');
+    tip.group.scale.setScalar(0.4);
+    tip.group.rotation.x = -Math.PI / 2;
+    tip.group.position.set(0, 0.25, -2.85);
+    remote.add(tip.group);
+    g.add(remote);
+    g.userData.ir = { keys, tip, recvLed };
+    return g;
+  },
+  update(part, _board, ctx) {
+    const u = part.group!.userData.ir;
+    const st = part.state;
+    const k: number | null = st.key ?? null;
+    u.keys.forEach((m: THREE.Mesh, i: number) => { (m.material as THREE.MeshBasicMaterial).opacity = k === i ? 0.35 : 0; });
+    if (!ctx.running) st.queue = [];
+    if (k != null && k !== st.lastKey) {
+      st.last = k;
+      st.flashUntil = performance.now() + 160;
+      if (ctx.running) (st.queue ??= []).push({ command: IR_KEYS[k][1], address: 0 });
+      if (st.queue?.length > 8) st.queue.shift();
+    }
+    st.lastKey = k;
+    const flash = performance.now() < (st.flashUntil ?? 0);
+    setLed(u.tip, flash ? 1 : 0);
+    setLed(u.recvLed, flash && ctx.running ? 0.8 : 0); // the module's own LED flickers as data arrives
+  },
+  listener(part) {
+    return {
+      ir(pin) {
+        if (pin !== part.pins.sig) return undefined;
+        return part.state.queue?.shift();
+      },
+    };
+  },
+  readout: part => (part.state.last != null
+    ? `Last button <b>${IR_KEYS[part.state.last][0]}</b> sends <b>${hex2(IR_KEYS[part.state.last][1])}</b> (${IR_KEYS[part.state.last][1]})`
+    : 'Click a button on the remote to send its code'),
+};
+
+// ---------- HC-05 Bluetooth module ----------
+const bluetooth: PartDef = {
+  type: 'bluetooth',
+  name: 'Bluetooth Module (HC-05)',
+  blurb: 'Talks to a phone wirelessly. Wire its TXD to the board’s RX pin and RXD to TX, then use SoftwareSerial bt(RX, TX). Open the phone app from this panel to send and receive messages.',
+  terminals: () => [
+    { key: 'vcc', label: 'VCC', kind: '5V', pos: [row(6, 1), 0.62, -1.55] },
+    { key: 'gnd', label: 'GND', kind: 'GND', pos: [row(6, 2), 0.62, -1.55] },
+    { key: 'txd', label: 'TXD (to board RX)', kind: 'signal', pos: [row(6, 3), 0.62, -1.55] },
+    { key: 'rxd', label: 'RXD (from board TX)', kind: 'signal', pos: [row(6, 4), 0.62, -1.55] },
+  ],
+  build() {
+    const g = new THREE.Group();
+    g.add(at(box(1.6, 0.12, 3.4, mat('#1f5fbf'), 0.04), 0, 0.5, -0.05));
+    for (const [x, z] of [[-0.65, -1.5], [0.65, -1.5], [-0.65, 1.4], [0.65, 1.4]]) g.add(at(cyl(0.06, 0.06, 0.5, M.dark, 6), x, 0.25, z));
+    for (let i = 0; i < 6; i++) g.add(at(cyl(0.035, 0.035, 0.3, M.gold, 6), row(6, i), 0.66, -1.55));
+    // the radio board on top, with its zig-zag antenna
+    g.add(at(box(1.3, 0.1, 2.5, mat('#1a7a4a'), 0.03), 0, 0.61, 0.25));
+    g.add(at(box(0.7, 0.12, 0.7, M.black, 0.03), 0, 0.71, 0.5));
+    const ant = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 0.5), new THREE.MeshStandardMaterial({ map: textTexture([{ text: '⌇⌇⌇⌇⌇⌇', x: 128, y: 32, size: 54, color: '#d4a94a' }], 256, 64, '#1a7a4a'), roughness: 0.5 }));
+    ant.rotation.x = -Math.PI / 2;
+    ant.position.set(0, 0.665, 1.25);
+    g.add(ant);
+    const led = makeLed('#ff3b30');
+    led.group.scale.setScalar(0.45);
+    led.group.position.set(0.55, 0.56, -1.0);
+    g.add(led.group);
+    g.userData.bt = { led };
+    return g;
+  },
+  update(part, _board, ctx) {
+    const st = part.state;
+    if (!ctx.running) { st.inbox = []; st.fromBoard = ''; } // a new run starts a fresh conversation
+    // fast blinking while waiting for a phone, a slow double blink once paired
+    const t = performance.now();
+    const on = !ctx.running && !st.missing?.length ? false : st.paired ? (t % 2000 < 120 || (t % 2000 > 260 && t % 2000 < 380)) : t % 250 < 125;
+    setLed(part.group!.userData.bt.led, on && !st.missing?.length ? 1 : 0);
+  },
+  listener(part) {
+    return {
+      btInbox(rx) { return rx === part.pins.txd ? (part.state.inbox ??= []) : undefined; },
+      btSend(tx, text) {
+        if (tx !== part.pins.rxd) return false;
+        part.state.fromBoard = ((part.state.fromBoard ?? '') + text).slice(-4000);
+        part.state.rev = (part.state.rev ?? 0) + 1;
+        return true;
+      },
+    };
+  },
+  readout: part => (part.state.paired ? 'Paired with the phone app' : 'Not paired: open the phone app to connect'),
+};
+
+// ---------- TM1637 4-digit display ----------
+const DIGIT_W = 100, DIGIT_H = 150;
+function drawDigits(canvas: HTMLCanvasElement, segs: number[] | null, brightness: number) {
+  const g = canvas.getContext('2d')!;
+  g.fillStyle = '#121214';
+  g.fillRect(0, 0, canvas.width, canvas.height);
+  const lit = segs ? `rgba(255, 52, 40, ${0.45 + (brightness / 7) * 0.55})` : '';
+  const seg = (on: boolean, x: number, y: number, w: number, h: number) => {
+    g.fillStyle = on ? lit : '#2a1214';
+    g.beginPath();
+    g.roundRect(x, y, w, h, Math.min(w, h) / 2);
+    g.fill();
+  };
+  for (let d = 0; d < 4; d++) {
+    const v = segs?.[d] ?? 0;
+    const ox = 22 + d * DIGIT_W + (d >= 2 ? 26 : 0), oy = 20;
+    const W = 56, T = 11, H = 52;
+    seg(!!(v & 1), ox + 6, oy, W, T); // a
+    seg(!!(v & 2), ox + W + 4, oy + 6, T, H); // b
+    seg(!!(v & 4), ox + W + 4, oy + H + 14, T, H); // c
+    seg(!!(v & 8), ox + 6, oy + 2 * H + 16, W, T); // d
+    seg(!!(v & 16), ox - 4, oy + H + 14, T, H); // e
+    seg(!!(v & 32), ox - 4, oy + 6, T, H); // f
+    seg(!!(v & 64), ox + 6, oy + H + 6, W, T); // g
+  }
+  // the colon sits between digits 2 and 3 and is driven by digit 2's dot bit
+  const colon = !!((segs?.[1] ?? 0) & 0x80);
+  for (const cy of [62, 108]) {
+    g.fillStyle = colon ? lit : '#2a1214';
+    g.beginPath();
+    g.arc(2 * DIGIT_W + 22 + 4, cy, 7, 0, Math.PI * 2);
+    g.fill();
+  }
+}
+
+const digits: PartDef = {
+  type: 'digits',
+  name: '4-Digit Display (TM1637)',
+  blurb: 'Four big 7-segment digits with a colon, driven by just two wires. Use the TM1637Display library: TM1637Display display(CLK, DIO); display.setBrightness(7); display.showNumberDec(1234);',
+  terminals: () => [
+    { key: 'clk', label: 'CLK', kind: 'signal', pos: [-2.55, 0.62, -0.45] },
+    { key: 'dio', label: 'DIO', kind: 'signal', pos: [-2.55, 0.62, -0.15] },
+    { key: 'vcc', label: 'VCC', kind: '5V', pos: [-2.55, 0.62, 0.15] },
+    { key: 'gnd', label: 'GND', kind: 'GND', pos: [-2.55, 0.62, 0.45] },
+  ],
+  build() {
+    const g = new THREE.Group();
+    g.add(at(box(5.4, 0.12, 2.0, mat('#1d4fa0'), 0.05), 0, 0.5, 0));
+    for (const [x, z] of [[-2.4, -0.8], [2.4, -0.8], [-2.4, 0.8], [2.4, 0.8]]) g.add(at(cyl(0.06, 0.06, 0.5, M.dark, 6), x, 0.25, z));
+    for (const z of [-0.45, -0.15, 0.15, 0.45]) g.add(at(cyl(0.035, 0.035, 0.3, M.gold, 6), -2.55, 0.66, z));
+    g.add(at(box(4.4, 0.45, 1.7, mat('#18181b'), 0.04), 0.25, 0.78, 0));
+    const canvas = document.createElement('canvas');
+    canvas.width = 4 * DIGIT_W + 70;
+    canvas.height = DIGIT_H + 20;
+    drawDigits(canvas, null, 7);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 8;
+    const screenMat = new THREE.MeshStandardMaterial({ map: tex, emissiveMap: tex, emissive: new THREE.Color('#ffffff'), emissiveIntensity: 0, roughness: 0.35 });
+    const screen = new THREE.Mesh(new THREE.PlaneGeometry(4.2, 4.2 * (canvas.height / canvas.width)), screenMat);
+    screen.rotation.x = -Math.PI / 2;
+    screen.position.set(0.25, 1.012, 0);
+    g.add(screen);
+    g.userData.digits = { canvas, tex, screenMat, key: '' };
+    return g;
+  },
+  update(part, board, ctx) {
+    const u = part.group!.userData.digits;
+    const st = ctx.running ? board.digits.get(`${part.pins.clk},${part.pins.dio}`) : undefined;
+    const segs = st?.on ? st.segs : null;
+    part.state.segs = segs;
+    const key = `${segs?.join(',')}|${st?.brightness}`;
+    if (key === u.key) return;
+    u.key = key;
+    drawDigits(u.canvas, segs, st?.brightness ?? 7);
+    u.tex.needsUpdate = true;
+    u.screenMat.emissiveIntensity = segs ? 0.9 : 0;
+  },
+  readout: part => {
+    const text = digitsText(part.state.segs);
+    return text.trim() ? `Showing <b style="font-family:var(--mono)">${text.replace(/ /g, '&nbsp;')}</b>` : 'Blank: nothing sent to it yet';
+  },
+};
+
+/** What a 4-digit display reads as text: digits, '-', ':' for the colon and spaces. */
+export function digitsText(segs: number[] | null | undefined): string {
+  if (!segs) return '    ';
+  const ch = (v: number) => {
+    const i = SEG_PATTERNS.indexOf(v & 0x7f);
+    return v & 0x7f ? (i >= 0 ? '0123456789ABCDEF'[i] : (v & 0x7f) === 0x40 ? '-' : '?') : ' ';
+  };
+  return `${ch(segs[0])}${ch(segs[1])}${segs[1] & 0x80 ? ':' : ''}${ch(segs[2])}${ch(segs[3])}`;
+}
+const SEG_PATTERNS = [0x3f, 0x06, 0x5b, 0x4f, 0x66, 0x6d, 0x7d, 0x07, 0x7f, 0x6f, 0x77, 0x7c, 0x39, 0x5e, 0x79, 0x71];
+
+// ---------- SD card module ----------
+const sdcard: PartDef = {
+  type: 'sdcard',
+  name: 'SD Card Module',
+  blurb: 'Saves text files to a memory card, perfect for data loggers. Wire CS to any pin plus MOSI to 11, MISO to 12 and SCK to 13, then use the SD library: SD.begin(CS), SD.open("log.txt", FILE_WRITE), file.println(), file.close().',
+  terminals: () => [
+    { key: 'gnd', label: 'GND', kind: 'GND', pos: [row(6, 0, 0.36), 0.62, -1.55] },
+    { key: 'vcc', label: 'VCC', kind: '5V', pos: [row(6, 1, 0.36), 0.62, -1.55] },
+    { key: 'miso', label: 'MISO (to 12)', kind: 'signal', pos: [row(6, 2, 0.36), 0.62, -1.55] },
+    { key: 'mosi', label: 'MOSI (to 11)', kind: 'signal', pos: [row(6, 3, 0.36), 0.62, -1.55] },
+    { key: 'sck', label: 'SCK (to 13)', kind: 'signal', pos: [row(6, 4, 0.36), 0.62, -1.55] },
+    { key: 'cs', label: 'CS', kind: 'signal', pos: [row(6, 5, 0.36), 0.62, -1.55] },
+  ],
+  build() {
+    const g = new THREE.Group();
+    g.add(at(box(2.5, 0.12, 3.6, mat('#1d4fa0'), 0.05), 0, 0.5, 0.1));
+    for (const [x, z] of [[-1.05, -1.4], [1.05, -1.4], [-1.05, 1.6], [1.05, 1.6]]) g.add(at(cyl(0.06, 0.06, 0.5, M.dark, 6), x, 0.25, z));
+    for (let i = 0; i < 6; i++) g.add(at(cyl(0.035, 0.035, 0.3, M.gold, 6), row(6, i, 0.36), 0.66, -1.55));
+    g.add(at(box(0.6, 0.18, 0.5, M.black, 0.03), -0.6, 0.65, -0.7)); // level shifter chip
+    // card slot and the card sticking out of it
+    g.add(at(box(2.0, 0.25, 2.1, M.metal, 0.03), 0, 0.69, 0.75));
+    g.add(at(box(1.7, 0.08, 0.9, mat('#2b5fd9'), 0.04), 0, 0.68, 2.05));
+    const label = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 0.7), new THREE.MeshStandardMaterial({ map: textTexture([{ text: 'SD', x: 128, y: 48, size: 60, weight: '700' }, { text: '8 GB', x: 128, y: 104, size: 30 }], 256, 128, '#2b5fd9') }));
+    label.rotation.x = -Math.PI / 2;
+    label.position.set(0, 0.725, 2.1);
+    g.add(label);
+    const led = makeLed('#ff3b30');
+    led.group.scale.setScalar(0.4);
+    led.group.position.set(0.9, 0.56, -0.7);
+    g.add(led.group);
+    g.userData.sd = { led };
+    return g;
+  },
+  update(part, _board, ctx) {
+    // the activity light flickers whenever the files change
+    const files: Record<string, string> = part.props.files ?? {};
+    const size = Object.values(files).reduce((n, f) => n + f.length, 0);
+    if (size !== part.state.size) { part.state.size = size; part.state.busyUntil = performance.now() + 120; }
+    setLed(part.group!.userData.sd.led, ctx.running && performance.now() < (part.state.busyUntil ?? 0) ? 1 : 0);
+  },
+  listener(part) {
+    return {
+      sd(cs, board) {
+        if (cs !== part.pins.cs) return undefined;
+        if (part.pins.mosi !== 11 || part.pins.miso !== 12 || part.pins.sck !== 13) {
+          board.hint('sdspi', 'The SD module talks over SPI, which uses fixed pins: MOSI to 11, MISO to 12 and SCK to 13.');
+          return undefined;
+        }
+        return (part.props.files ??= {});
+      },
+    };
+  },
+  readout: part => {
+    const files: Record<string, string> = part.props.files ?? {};
+    const names = Object.keys(files);
+    if (!names.length) return 'The card is empty';
+    const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    return names.map(n => {
+      const lines = files[n].split('\n');
+      const tail = lines.slice(-6).join('\n');
+      return `<div class="sd-file"><b>${esc(n)}</b> <small>${files[n].length} bytes</small><pre>${lines.length > 6 ? '…\n' : ''}${esc(tail)}</pre></div>`;
+    }).join('');
+  },
+};
+
 export const PARTS: Record<string, PartDef> = Object.fromEntries(
-  [uno, led, rgbLed, button, pot, ldr, tmp36, buzzer, ultrasonic, servo, motor, trafficLight, car, lcd, sevenSeg, pir, joystick, neopixel, bigBreadboard, relay, dht11, oled, stepper, keypad, soil, encoder, matrix, hall, magnet, sound, gas].map(d => [d.type, d]),
+  [uno, led, rgbLed, button, pot, ldr, tmp36, buzzer, ultrasonic, servo, motor, trafficLight, car, lcd, sevenSeg, pir, joystick, neopixel, bigBreadboard, relay, dht11, oled, stepper, keypad, soil, encoder, matrix, hall, magnet, sound, gas, irRemote, bluetooth, digits, sdcard].map(d => [d.type, d]),
 );
 
 /** Parts shown in the sandbox palette, in order. */
-export const PALETTE = ['breadboard', 'led', 'rgb', 'button', 'keypad', 'pot', 'encoder', 'joystick', 'ldr', 'temp', 'dht', 'soil', 'gas', 'sound', 'hall', 'pir', 'buzzer', 'ultrasonic', 'servo', 'stepper', 'motor', 'relay', 'traffic', 'seg7', 'lcd', 'oled', 'matrix', 'neopixel', 'magnet', 'car'];
+export const PALETTE = ['breadboard', 'led', 'rgb', 'button', 'keypad', 'pot', 'encoder', 'joystick', 'ldr', 'temp', 'dht', 'soil', 'gas', 'sound', 'hall', 'pir', 'buzzer', 'ultrasonic', 'servo', 'stepper', 'motor', 'relay', 'traffic', 'seg7', 'digits', 'lcd', 'oled', 'matrix', 'neopixel', 'ir', 'bluetooth', 'sdcard', 'magnet', 'car'];
 
 let idCounter = 0;
 export function newPart(type: string, init: Partial<Part> = {}): Part {
