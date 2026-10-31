@@ -21,6 +21,7 @@ export class Instructor {
   private input: HTMLInputElement;
   private hideTimer = 0;
   private photos: Partial<Record<Mood, string>> = {};
+  private smallPhotos: Partial<Record<string, { url: string; w: number }>> = {}; // half-width copies, keyed by full-size url
   private photo: HTMLImageElement | null = null;
   private talkTimer = 0;
 
@@ -153,38 +154,51 @@ export class Instructor {
     if (this.photo) {
       // photos come in four moods; the others borrow the closest one
       const pick = this.photos[mood] ?? this.photos[mood === 'cheer' || mood === 'wow' ? 'happy' : 'think'] ?? this.photos.happy!;
-      if (this.photo.getAttribute('src') !== pick) this.photo.src = pick;
+      if (this.photo.getAttribute('src') !== pick) this.showPhoto(pick);
     }
   }
 
   /**
    * Use realistic images instead of the drawing when they exist: <base>/happy (required),
    * plus optional talk, think and concern, each as .png, .jpg or .webp. Missing files keep the drawing.
+   * A half-width copy named <mood>-sm.<ext> is used for the small tile when present: a big photo
+   * squeezed that small shimmers with grain.
    */
   usePhotos(base: string) {
     const moods: Mood[] = ['happy', 'talk', 'think', 'concern'];
     const exts = ['png', 'jpg', 'jpeg', 'webp'];
     for (const m of moods) {
-      const tryExt = (i: number) => {
-        if (i >= exts.length) return;
-        const url = `${base}/${m}.${exts[i]}`;
-        const img = new Image();
-        img.onerror = () => tryExt(i + 1);
-        img.onload = () => {
+      void (async () => {
+        for (const ext of exts) {
+          const url = `${base}/${m}.${ext}`;
+          if (!(await isImage(url))) continue;
           this.photos[m] = url;
+          // only the small copy is actually loaded here, so the browser isn't
+          // tempted to keep showing an already-downloaded full-size photo
+          const small = await smallCopy(url);
+          if (small) this.smallPhotos[url] = small;
           if (m === 'happy' && !this.photo) {
             this.photo = document.createElement('img');
             this.photo.alt = '';
-            this.photo.src = url;
+            this.photo.sizes = '(max-width: 600px) 84px, (max-width: 1000px) 112px, 168px';
+            this.photo.decoding = 'async';
+            this.showPhoto(url);
             const fig = this.root.querySelector('.ins-figure')!;
             fig.classList.add('photo-mode');
             fig.appendChild(this.photo);
           }
-        };
-        img.src = url;
-      };
-      tryExt(0);
+          return;
+        }
+      })();
     }
+  }
+
+  private showPhoto(url: string) {
+    const photo = this.photo!;
+    const small = this.smallPhotos[url];
+    if (small) photo.srcset = `${small.url} ${small.w}w, ${url} ${small.w * 2}w`;
+    else photo.removeAttribute('srcset');
+    photo.src = url;
   }
 
   private addMessage(who: 'nova' | 'you', html: string, actions?: InstructorAction[]) {
@@ -226,4 +240,26 @@ export class Instructor {
     };
     setTimeout(blink, 2000);
   }
+}
+
+/** Does this url serve an image? (A HEAD request, so nothing big is downloaded.) */
+async function isImage(url: string): Promise<boolean> {
+  try {
+    const res = await fetch(url, { method: 'HEAD' });
+    // some hosts answer a missing file with the app page instead of a 404
+    return res.ok && (res.headers.get('content-type') ?? '').startsWith('image/');
+  } catch {
+    return false;
+  }
+}
+
+/** The optional half-width copy of a photo (<name>-sm.<ext>), loaded to learn its width. */
+function smallCopy(url: string): Promise<{ url: string; w: number } | null> {
+  const small = url.replace(/(\.\w+)$/, '-sm$1');
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => resolve({ url: small, w: img.naturalWidth });
+    img.onerror = () => resolve(null);
+    img.src = small;
+  });
 }
