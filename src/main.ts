@@ -1311,7 +1311,7 @@ function renderMute() {
 muteBtn.onclick = () => { saved.muted = !saved.muted; renderMute(); save(); };
 
 window.addEventListener('keydown', e => {
-  const inField = (e.target as HTMLElement).closest('input, textarea, select');
+  const inField = e.target instanceof Element && e.target.closest('input, textarea, select');
   if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
     e.preventDefault();
     run();
