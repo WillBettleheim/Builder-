@@ -119,6 +119,22 @@ export const QUIZZES: Record<string, Question[]> = {
     { q: 'How do 8 wires read 16 keys?', a: ['Each key joins one row to one column', 'Each wire reads two keys', 'The keypad has a chip'], correct: 0, why: 'The library scans rows and columns to find the crossing point.' },
     { q: 'entered += key does what?', a: ['Adds the key to the end of the text', 'Adds the key’s number value', 'Replaces the text'], correct: 0, why: 'For Strings, + joins text together.' },
   ],
+  encoder: [
+    { q: 'How is a rotary encoder different from a potentiometer?', a: ['It turns forever and reports clicks, not an angle', 'It reads temperature', 'It can only turn one way'], correct: 0, why: 'Encoders count steps in either direction with no end stop.' },
+    { q: 'CLK just changed and DT is different from CLK. Which way did it turn?', a: ['Clockwise', 'Anticlockwise', 'It didn’t move'], correct: 0, why: 'The order the two pins change in reveals the direction.' },
+  ],
+  matrix: [
+    { q: 'What does B00011000 draw on one row?', a: ['The two middle LEDs lit', 'The two outer LEDs lit', 'All eight LEDs'], correct: 0, why: 'Each 1 is a lit LED, read left to right.' },
+    { q: 'Why does the matrix stay dark until lc.shutdown(0, false)?', a: ['The MAX7219 starts asleep to save power', 'The LEDs need to warm up', 'It needs a reset button'], correct: 0, why: 'Waking the chip is always the first step.' },
+  ],
+  clap: [
+    { q: 'What does the DO pin tell you?', a: ['Whether it’s louder than the threshold', 'The exact loudness', 'The pitch of the sound'], correct: 0, why: 'DO is digital: HIGH above the threshold, LOW below.' },
+    { q: 'Why wait about 300 ms after toggling?', a: ['So one clap isn’t counted several times', 'To save power', 'The microphone needs to cool down'], correct: 0, why: 'A clap stays loud for a moment; the pause makes it one toggle.' },
+  ],
+  smoke: [
+    { q: 'What happens to the MQ-2’s AO reading as smoke increases?', a: ['It goes up', 'It goes down', 'It stays the same'], correct: 0, why: 'More gas changes the sensor’s resistance, raising the voltage on AO.' },
+    { q: 'Why does the MQ-2 get warm?', a: ['It has a small heater that helps it react with gas', 'The board is overheating', 'It’s broken'], correct: 0, why: 'The heater is how this kind of sensor works; it needs a few minutes to stabilise.' },
+  ],
   parking: [
     { q: 'digitalWrite(GRN, cm > 30) works because…', a: ['A comparison is 1 (true) or 0 (false)', 'digitalWrite accepts distances', 'It only works for green'], correct: 0, why: 'true is HIGH and false is LOW.' },
     { q: 'What does && mean?', a: ['Both conditions must be true', 'Either condition', 'Add the numbers'], correct: 0, why: 'cm > 15 && cm <= 30 is only true between 15 and 30.' },

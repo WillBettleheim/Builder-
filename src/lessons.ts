@@ -1978,12 +1978,274 @@ void loop() {
   ],
 });
 
+// ---------- encoder, LED matrix, clap switch, smoke alarm ----------
+const ENC_HEAD = `const int CLK = 2, DT = 3, SW = 4;
+int position = 0;
+int lastClk;
+
+void setup() {
+  Serial.begin(9600);
+  pinMode(CLK, INPUT);
+  pinMode(DT, INPUT);
+  pinMode(SW, INPUT_PULLUP);
+  lastClk = digitalRead(CLK);
+}
+`;
+
+LESSONS.push({
+  id: 'encoder',
+  title: 'Spin the Dial',
+  icon: 'encoder',
+  level: 'Sensors',
+  intro: `
+<p>A potentiometer stops at each end. A <strong>rotary encoder</strong> turns forever, click by click, like a car stereo's volume knob.</p>
+<p>It doesn't report an angle. Instead its two pins, <strong>CLK</strong> and <strong>DT</strong>, switch in a pattern as it turns. Each time CLK changes, look at DT:</p>
+<ul>
+  <li>DT is <em>different</em> from CLK: it turned clockwise, so count up.</li>
+  <li>DT is the <em>same</em>: anticlockwise, so count down.</li>
+</ul>
+<p><strong>Drag the knob</strong> up or down to turn it. Click it to press its built-in switch (<strong>SW</strong> reads LOW when pressed).</p>`,
+  parts: [BOARD, { type: 'encoder', x: 12, z: 3, pins: { clk: 2, dt: 3, sw: 4 } }],
+  code: ENC_HEAD + `
+void loop() {
+  int clk = digitalRead(CLK);
+  if (clk != lastClk) {                        // the knob moved one click
+    if (digitalRead(DT) != clk) position++;    // clockwise
+    else position--;                           // anticlockwise
+    Serial.println(position);
+  }
+  lastClk = clk;
+
+  // TODO: when SW reads LOW (pressed), set position back to 0 and print it
+}
+`,
+  solution: ENC_HEAD + `
+void loop() {
+  int clk = digitalRead(CLK);
+  if (clk != lastClk) {
+    if (digitalRead(DT) != clk) position++;
+    else position--;
+    Serial.println(position);
+  }
+  lastClk = clk;
+
+  if (digitalRead(SW) == LOW) {
+    position = 0;
+    Serial.println(position);
+    delay(250);   // wait for the button to settle
+  }
+}
+`,
+  goals: [
+    { text: 'Turn it 5 clicks clockwise and see 5 printed', check: (c, m) => seen(m, 'x', (lastNumber(c.serial) ?? 0) >= 5) },
+    { text: 'Turn it back the other way and watch it count down', check: (c, m) => { const n = lastNumber(c.serial); if (n != null) { if (m.max != null && n < m.max) m.down = true; m.max = Math.max(m.max ?? n, n); } return !!m.down; } },
+    {
+      text: 'Challenge: click the knob to reset the count to 0',
+      check: (c, m) => {
+        const n = lastNumber(c.serial);
+        if (n != null && n !== 0) m.counted = true;
+        if (m.counted && c.part('encoder')?.state.pressed) m.pressed = true;
+        return seen(m, 'x', !!m.pressed && n === 0);
+      },
+    },
+  ],
+});
+
+const MATRIX_HEAD = `#include <LedControl.h>
+
+LedControl lc = LedControl(12, 11, 10, 1);   // DIN, CLK, CS, number of displays
+
+// each row is 8 LEDs: 1 = on, read left to right
+byte smile[8] = {
+  B00111100,
+  B01000010,
+  B10100101,
+  B10000001,
+  B10100101,
+  B10011001,
+  B01000010,
+  B00111100
+};
+`;
+
+LESSONS.push({
+  id: 'matrix',
+  title: 'Pixel Art',
+  icon: 'matrix',
+  level: 'Displays',
+  intro: `
+<p>This matrix has 64 LEDs, but a <strong>MAX7219</strong> chip on the back drives them all, so you only need 3 data wires.</p>
+<p>Each row is one <code>byte</code>, 8 bits for 8 LEDs. Write it in binary so you can <em>see</em> the picture in your code:</p>
+<pre>B00111100   →  ··████··</pre>
+<p><code>lc.setRow(0, row, value)</code> draws a row. The display starts asleep, so <code>lc.shutdown(0, false)</code> wakes it first.</p>
+<p><strong>Challenge:</strong> animate it. Draw a second picture, like a wink, and switch between the two in <code>loop()</code>.</p>`,
+  parts: [BOARD, { type: 'matrix', x: 13, z: -1, pins: { din: 12, clk: 11, cs: 10 } }],
+  code: MATRIX_HEAD + `
+void setup() {
+  lc.shutdown(0, false);    // wake it up
+  lc.setIntensity(0, 8);    // brightness 0-15
+  lc.clearDisplay(0);
+  for (int r = 0; r < 8; r++) lc.setRow(0, r, smile[r]);
+}
+
+void loop() {
+  // TODO: animate! e.g. switch between the smile and a wink every half second
+}
+`,
+  solution: MATRIX_HEAD + `
+byte wink[8] = {
+  B00111100,
+  B01000010,
+  B10000101,
+  B10000001,
+  B10100101,
+  B10011001,
+  B01000010,
+  B00111100
+};
+
+void draw(byte img[]) {
+  for (int r = 0; r < 8; r++) lc.setRow(0, r, img[r]);
+}
+
+void setup() {
+  lc.shutdown(0, false);
+  lc.setIntensity(0, 8);
+}
+
+void loop() {
+  draw(smile);
+  delay(500);
+  draw(wink);
+  delay(500);
+}
+`,
+  goals: [
+    { text: 'Show the smiley face', check: (c, m) => seen(m, 'x', (c.part('matrix')?.state.lit ?? 0) >= 15) },
+    { text: 'Challenge: animate between two pictures', check: (c, m) => { const sig = c.part('matrix')?.state.sig; if (sig) (m.s ??= new Set()).add(sig); return (m.s?.size ?? 0) >= 2; } },
+  ],
+});
+
+LESSONS.push({
+  id: 'clap',
+  title: 'Clap Switch',
+  icon: 'sound',
+  level: 'Sensors',
+  intro: `
+<p>The <strong>sound sensor</strong> measures how loud it is. <strong>AO</strong> gives the loudness on <code>analogRead()</code>, and <strong>DO</strong> flips HIGH whenever it's louder than a threshold you set with the little blue screw.</p>
+<p>Open the <b>Plotter</b> tab and <strong>click the microphone</strong> to clap. You'll see a spike!</p>
+<p><strong>Your job:</strong> build a clap switch. Each clap toggles the LED on or off. Watch for DO going from LOW to HIGH (an <em>edge</em>), flip a <code>bool</code>, and wait a moment so one clap doesn't count twice.</p>`,
+  parts: [BOARD, { type: 'sound', x: 12, z: 4, pins: { ao: 14, do: 2 } }, { type: 'led', x: 13, z: -4, pins: { pin: 13 }, props: { color: 'yellow' } }],
+  code: `const int MIC = A0, CLAP = 2, LED = 13;
+
+void setup() {
+  Serial.begin(9600);
+  pinMode(CLAP, INPUT);
+  pinMode(LED, OUTPUT);
+}
+
+void loop() {
+  Serial.println(analogRead(MIC));   // open the Plotter tab!
+
+  // TODO: when CLAP goes HIGH, toggle the LED (and wait ~300 ms)
+
+  delay(20);
+}
+`,
+  solution: `const int MIC = A0, CLAP = 2, LED = 13;
+bool lightOn = false;
+
+void setup() {
+  Serial.begin(9600);
+  pinMode(CLAP, INPUT);
+  pinMode(LED, OUTPUT);
+}
+
+void loop() {
+  Serial.println(analogRead(MIC));
+
+  if (digitalRead(CLAP) == HIGH) {
+    lightOn = !lightOn;
+    digitalWrite(LED, lightOn);
+    delay(300);   // one clap, one toggle
+  }
+  delay(20);
+}
+`,
+  goals: [
+    { text: 'Clap and see a loud spike (over 600)', check: (c, m) => seen(m, 'x', serialLines(c.serial).slice(-12).some(l => Number(l) > 600)) },
+    { text: 'Clap to switch the LED on', check: (c, m) => { if (c.part('sound')?.state.clap) m.clapped = true; return seen(m, 'x', !!m.clapped && (c.part('led')?.state.level ?? 0) > 0.5); } },
+    { text: 'Clap again to switch it off', check: (c, m) => { const on = (c.part('led')?.state.level ?? 0) > 0.5; if (on) m.wasOn = true; return seen(m, 'x', !!m.wasOn && !on && !c.part('sound')?.state.clap && (c.board.transitions.get(13)?.length ?? 0) >= 2); } },
+  ],
+});
+
+LESSONS.push({
+  id: 'smoke',
+  title: 'Project: Smoke Alarm',
+  icon: 'gas',
+  level: 'Projects',
+  intro: `
+<p><strong>Project:</strong> a smoke alarm! The <strong>MQ-2</strong> has a tiny heater inside (see it glow?) that reacts with smoke and gas, so its <strong>AO</strong> reading climbs as the air gets smokier.</p>
+<p><strong>Your job:</strong> when the reading goes above <code>400</code>, flash the red LED and sound the buzzer. When the air is clear again, go quiet.</p>
+<p><strong>Drag the sensor</strong> up to add smoke, and down to clear it.</p>
+<p>Real gas sensors need a few minutes to warm up before their readings are trustworthy, and a real alarm should always be a certified one!</p>`,
+  parts: [BOARD, { type: 'gas', x: 12, z: 4, pins: { ao: 14 } }, { type: 'buzzer', x: 18, z: -2, pins: { pin: 8 } }, { type: 'led', x: 12, z: -4, pins: { pin: 12 }, props: { color: 'red' } }],
+  code: `const int SENSOR = A0, BUZZER = 8, LED = 12;
+const int LIMIT = 400;
+
+void setup() {
+  Serial.begin(9600);
+  pinMode(LED, OUTPUT);
+}
+
+void loop() {
+  int smoke = analogRead(SENSOR);
+  Serial.println(smoke);
+
+  // TODO: above LIMIT -> LED on + tone(BUZZER, 2000). Otherwise LED off + noTone.
+
+  delay(200);
+}
+`,
+  solution: `const int SENSOR = A0, BUZZER = 8, LED = 12;
+const int LIMIT = 400;
+
+void setup() {
+  Serial.begin(9600);
+  pinMode(LED, OUTPUT);
+}
+
+void loop() {
+  int smoke = analogRead(SENSOR);
+  Serial.println(smoke);
+
+  if (smoke > LIMIT) {
+    digitalWrite(LED, HIGH);
+    tone(BUZZER, 2000);
+    delay(150);
+    digitalWrite(LED, LOW);
+    noTone(BUZZER);
+    delay(100);
+  } else {
+    digitalWrite(LED, LOW);
+    noTone(BUZZER);
+    delay(200);
+  }
+}
+`,
+  goals: [
+    { text: 'Print the smoke level', check: (c, m) => { const n = lastNumber(c.serial); const g = c.part('gas')?.props.gas; return seen(m, 'x', n != null && g != null && Math.abs(n - (90 + g * 8.5)) < 40); } },
+    { text: 'Lots of smoke (over 50%): LED and buzzer go off', check: (c, m) => { const g = c.part('gas')?.props.gas ?? 0; if (g > 50 && (c.part('led')?.state.level ?? 0) > 0.5) m.led = true; if (g > 50 && c.part('buzzer')?.state.freq) m.buzz = true; return seen(m, 'x', !!m.led && !!m.buzz); } },
+    { text: 'Clear air (under 20%): quiet again', check: (c, m) => { const g = c.part('gas')?.props.gas ?? 0; if (g > 50 && c.part('buzzer')?.state.freq) m.alarm = true; return seen(m, 'x', !!m.alarm && g < 20 && !c.part('buzzer')?.state.freq && c.part('led')?.state.level === 0); } },
+  ],
+});
+
 // Canonical order: grouped by level, easiest first within each group.
 const ORDER = [
   'blink', 'circuit', 'breadboard', 'fade', 'chaser', 'rgb', 'serial',
-  'seg7', 'lcd', 'oled', 'neopixel',
-  'button', 'millis', 'interrupts', 'pot', 'joystick', 'nightlight', 'sound', 'morse', 'distance',
+  'seg7', 'lcd', 'oled', 'matrix', 'neopixel',
+  'button', 'millis', 'interrupts', 'pot', 'encoder', 'joystick', 'nightlight', 'sound', 'morse', 'clap', 'distance',
   'servo', 'stepper', 'motor', 'relay',
-  'thermo', 'weather', 'plant', 'motion', 'lock', 'parking',
+  'thermo', 'weather', 'plant', 'smoke', 'motion', 'lock', 'parking',
 ];
 LESSONS.sort((a, b) => ORDER.indexOf(a.id) - ORDER.indexOf(b.id));
