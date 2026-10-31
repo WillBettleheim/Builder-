@@ -1,6 +1,6 @@
 // Lesson content: scene setup, starter code, explanations and checkable goals.
 import type { Board } from './sim/board';
-import type { Part } from './sim/parts';
+import { IR_KEYS, digitsText, type Part } from './sim/parts';
 import type { Wire } from './sim/circuit';
 
 export interface GoalCtx {
@@ -2500,12 +2500,276 @@ void loop() {
   },
 );
 
+// ---------- remote controls, phones, big digits and data logging ----------
+const irLabel = (c: GoalCtx) => { const k = c.part('ir')?.state.last; return k != null ? IR_KEYS[k][0] : null; };
+const btLog = (c: GoalCtx): { me?: boolean; text?: string }[] => c.part('bluetooth')?.state.log ?? [];
+
+LESSONS.push(
+  {
+    id: 'remote',
+    title: 'TV Remote Control',
+    icon: 'ir',
+    level: 'Sensors',
+    intro: `
+<p>A TV remote flashes an <strong>invisible infrared light</strong> in a fast pattern. Each button has its own pattern, a number called its <em>code</em>. The receiver module turns the flashes back into that number.</p>
+<pre>IrReceiver.begin(IR_PIN, ENABLE_LED_FEEDBACK);
+if (IrReceiver.decode()) {
+  int code = IrReceiver.decodedIRData.command;
+  IrReceiver.resume();   // ready for the next one
+}</pre>
+<p>Run the sketch and <strong>click buttons on the remote</strong> in the scene. Each code appears in the Serial Monitor in hex: button <b>1</b> sends <code>0xC</code>, button <b>2</b> sends <code>0x18</code>.</p>`,
+    parts: [BOARD, { type: 'ir', x: 13, z: 2, pins: { sig: 11 } }, { type: 'led', x: 11, z: -3, pins: { pin: 9 }, props: { color: 'green' } }],
+    code: `#include <IRremote.hpp>
+
+const int IR_PIN = 11, LED = 9;
+
+void setup() {
+  Serial.begin(9600);
+  IrReceiver.begin(IR_PIN, ENABLE_LED_FEEDBACK);
+  pinMode(LED, OUTPUT);
+}
+
+void loop() {
+  if (IrReceiver.decode()) {
+    int code = IrReceiver.decodedIRData.command;
+    Serial.print("Button code: 0x");
+    Serial.println(code, HEX);
+
+    // TODO: button 1 (0x0C) turns the LED on, button 2 (0x18) turns it off
+
+    IrReceiver.resume();
+  }
+}
+`,
+    solution: `#include <IRremote.hpp>
+
+const int IR_PIN = 11, LED = 9;
+
+void setup() {
+  Serial.begin(9600);
+  IrReceiver.begin(IR_PIN, ENABLE_LED_FEEDBACK);
+  pinMode(LED, OUTPUT);
+}
+
+void loop() {
+  if (IrReceiver.decode()) {
+    int code = IrReceiver.decodedIRData.command;
+    Serial.print("Button code: 0x");
+    Serial.println(code, HEX);
+
+    if (code == 0x0C) digitalWrite(LED, HIGH);   // button 1
+    if (code == 0x18) digitalWrite(LED, LOW);    // button 2
+
+    IrReceiver.resume();
+  }
+}
+`,
+    goals: [
+      { text: 'Click a remote button and see its code in the Serial Monitor', check: (c, m) => seen(m, 'x', irLabel(c) != null && /[0-9A-F]{1,2}\s*$/im.test(c.serial.trim())) },
+      { text: 'Button 1 turns the LED on', check: (c, m) => seen(m, 'x', irLabel(c) === '1' && (c.part('led')?.state.level ?? 0) > 0.5) },
+      { text: 'Button 2 turns it off again', check: (c, m) => { if ((c.part('led')?.state.level ?? 0) > 0.5) m.wasOn = true; return seen(m, 'x', !!m.wasOn && irLabel(c) === '2' && c.part('led')?.state.level === 0); } },
+    ],
+  },
+  {
+    id: 'scoreboard',
+    title: 'Scoreboard',
+    icon: 'digits',
+    level: 'Displays',
+    intro: `
+<p>The <strong>TM1637</strong> display has four big digits and a colon, but needs just <em>two</em> data wires. Its library does the hard work:</p>
+<pre>TM1637Display display(CLK, DIO);
+display.setBrightness(7);        // 0–7
+display.showNumberDec(42);       // "  42"
+display.showNumberDec(42, true); // "0042"</pre>
+<p><strong>Your job:</strong> make a scoreboard. Each press of the button adds one point.</p>
+<p><strong>Watch out:</strong> <code>loop()</code> runs thousands of times while you hold the button down. Count the moment it goes <em>down</em>, not every loop it stays down.</p>`,
+    parts: [BOARD, { type: 'digits', x: 15, z: -3, pins: { clk: 2, dio: 3 } }, { type: 'button', x: 11, z: 4, pins: { pin: 4 }, props: { color: '#3b82c4' } }],
+    code: `#include <TM1637Display.h>
+
+const int CLK = 2, DIO = 3, BUTTON = 4;
+TM1637Display display(CLK, DIO);
+int score = 0;
+
+void setup() {
+  pinMode(BUTTON, INPUT);
+  display.setBrightness(7);
+  display.showNumberDec(1234);
+}
+
+void loop() {
+  // TODO: when the button goes down, add 1 to score and show it
+}
+`,
+    solution: `#include <TM1637Display.h>
+
+const int CLK = 2, DIO = 3, BUTTON = 4;
+TM1637Display display(CLK, DIO);
+int score = 0;
+bool wasDown = false;
+
+void setup() {
+  pinMode(BUTTON, INPUT);
+  display.setBrightness(7);
+  display.showNumberDec(1234);
+}
+
+void loop() {
+  bool down = digitalRead(BUTTON) == HIGH;
+  if (down && !wasDown) {          // only the moment it goes down
+    score++;
+    display.showNumberDec(score, true);
+  }
+  wasDown = down;
+  delay(10);
+}
+`,
+    goals: [
+      { text: 'See 1234 on the display', check: (c, m) => seen(m, 'x', digitsText(c.part('digits')?.state.segs) === '1234') },
+      { text: 'Each press adds exactly one point: reach 5', check: (c, m) => { const b = !!c.part('button')?.state.pressed; if (b && !m.down) m.n = (m.n ?? 0) + 1; m.down = b; return seen(m, 'x', (m.n ?? 0) >= 5 && parseInt(digitsText(c.part('digits')?.state.segs).replace(/\D/g, ''), 10) === m.n); } },
+      { text: 'Challenge: show the score with leading zeros, like 0005', check: (c, m) => seen(m, 'x', /^0\d{3}$/.test(digitsText(c.part('digits')?.state.segs)) && digitsText(c.part('digits')?.state.segs) !== '0000') },
+    ],
+  },
+  {
+    id: 'phone',
+    title: 'Project: Phone Control',
+    icon: 'bluetooth',
+    level: 'Projects',
+    intro: `
+<p><strong>Project:</strong> switch a light from your phone. The <strong>HC-05</strong> Bluetooth module is a wireless serial cable: whatever the phone sends arrives like Serial Monitor text.</p>
+<p>The board’s real Serial pins (0 and 1) are busy talking to the computer, so <code>SoftwareSerial</code> makes a second serial port on any two pins:</p>
+<pre>SoftwareSerial bt(10, 11);   // RX, TX
+bt.begin(9600);
+if (bt.available()) { char c = bt.read(); }
+bt.println("hi phone!");</pre>
+<p>Click the module, then <strong>📱 Open phone app</strong> to chat with your board.</p>`,
+    parts: [BOARD, { type: 'bluetooth', x: 13, z: 4, pins: { txd: 10, rxd: 11 } }, { type: 'led', x: 11, z: -3, pins: { pin: 8 }, props: { color: 'blue' } }],
+    code: `#include <SoftwareSerial.h>
+
+SoftwareSerial bt(10, 11);   // RX, TX: the module's TXD goes to 10, its RXD to 11
+const int LED = 8;
+
+void setup() {
+  Serial.begin(9600);
+  bt.begin(9600);
+  pinMode(LED, OUTPUT);
+  bt.println("Hello from Builder!");
+}
+
+void loop() {
+  if (bt.available()) {
+    char c = bt.read();
+    Serial.print("Phone sent: ");
+    Serial.println(c);
+
+    // TODO: '1' turns the LED on and '0' turns it off.
+    //       Reply to the phone with bt.println("LED ON") or "LED OFF".
+  }
+}
+`,
+    solution: `#include <SoftwareSerial.h>
+
+SoftwareSerial bt(10, 11);   // RX, TX
+const int LED = 8;
+
+void setup() {
+  Serial.begin(9600);
+  bt.begin(9600);
+  pinMode(LED, OUTPUT);
+  bt.println("Hello from Builder!");
+}
+
+void loop() {
+  if (bt.available()) {
+    char c = bt.read();
+    if (c == '1') {
+      digitalWrite(LED, HIGH);
+      bt.println("LED ON");
+    } else if (c == '0') {
+      digitalWrite(LED, LOW);
+      bt.println("LED OFF");
+    }
+  }
+}
+`,
+    goals: [
+      { text: 'Open the phone app and see the board say hello', check: (c, m) => seen(m, 'x', btLog(c).some(l => !l.me && /hello/i.test(l.text ?? ''))) },
+      { text: 'Send 1 to switch the LED on, then 0 to switch it off', check: (c, m) => { const sent = btLog(c).filter(l => l.me).pop()?.text; const lit = (c.part('led')?.state.level ?? 0) > 0.5; if (sent === '1' && lit) m.on = true; return seen(m, 'x', !!m.on && sent === '0' && !lit); } },
+      { text: 'Reply to the phone with “LED ON” or “LED OFF”', check: (c, m) => seen(m, 'x', btLog(c).some(l => !l.me && /LED (ON|OFF)/i.test(l.text ?? ''))) },
+    ],
+  },
+  {
+    id: 'logger',
+    title: 'Project: Data Logger',
+    icon: 'sdcard',
+    level: 'Projects',
+    intro: `
+<p><strong>Project:</strong> a weather logger that keeps working with no computer attached. It writes every reading to a file on an <strong>SD card</strong>, so you can open it in a spreadsheet later.</p>
+<pre>File f = SD.open("log.txt", FILE_WRITE);   // FILE_WRITE adds to the end
+if (f) {
+  f.println(tempC);
+  f.close();                              // always close!
+}</pre>
+<p>Click the SD module to see what’s on the card. <strong>Challenge:</strong> write each line as <code>seconds,temperature</code>, like <code>3,24.50</code>. That’s CSV, the format every spreadsheet understands.</p>`,
+    parts: [BOARD, { type: 'sdcard', x: 15, z: 4, pins: { cs: 10, mosi: 11, miso: 12, sck: 13 } }, { type: 'temp', x: 11, z: -4, pins: { sig: 14 } }],
+    code: `#include <SD.h>
+
+const int CS = 10;
+
+void setup() {
+  Serial.begin(9600);
+  if (SD.begin(CS)) Serial.println("Card ready");
+  else Serial.println("No card!");
+}
+
+void loop() {
+  float volts = analogRead(A0) * 5.0 / 1023.0;
+  float tempC = (volts - 0.5) * 100.0;
+  Serial.println(tempC);
+
+  // TODO: open "log.txt" with FILE_WRITE, println the temperature, then close it
+
+  delay(1000);
+}
+`,
+    solution: `#include <SD.h>
+
+const int CS = 10;
+
+void setup() {
+  Serial.begin(9600);
+  if (SD.begin(CS)) Serial.println("Card ready");
+  else Serial.println("No card!");
+}
+
+void loop() {
+  float volts = analogRead(A0) * 5.0 / 1023.0;
+  float tempC = (volts - 0.5) * 100.0;
+  Serial.println(tempC);
+
+  File f = SD.open("log.txt", FILE_WRITE);
+  if (f) {
+    f.print(millis() / 1000);   // seconds since start
+    f.print(",");
+    f.println(tempC);
+    f.close();
+  }
+  delay(1000);
+}
+`,
+    goals: [
+      { text: 'Start the card: “Card ready” in the Serial Monitor', check: c => /card ready/i.test(c.serial) },
+      { text: 'Write 5 readings into log.txt', check: c => (c.part('sdcard')?.props.files?.['log.txt'] ?? '').split('\n').filter((l: string) => /-?\d/.test(l)).length >= 5 },
+      { text: 'Challenge: write CSV lines like 3,24.50', check: c => (c.part('sdcard')?.props.files?.['log.txt'] ?? '').split('\n').filter((l: string) => /^\s*\d+\s*,\s*-?\d+(\.\d+)?\s*$/.test(l)).length >= 3 },
+    ],
+  },
+);
+
 const ORDER = [
   'blink', 'circuit', 'breadboard', 'fade', 'chaser', 'rgb', 'serial',
-  'seg7', 'lcd', 'oled', 'matrix', 'neopixel',
-  'button', 'millis', 'interrupts', 'pot', 'encoder', 'joystick', 'nightlight', 'sound', 'morse', 'clap', 'distance',
+  'seg7', 'scoreboard', 'lcd', 'oled', 'matrix', 'neopixel',
+  'button', 'millis', 'interrupts', 'pot', 'encoder', 'joystick', 'remote', 'nightlight', 'sound', 'morse', 'clap', 'distance',
   'servo', 'stepper', 'motor', 'relay',
   'bug-pinmode', 'bug-wiring', 'bug-button', 'bug-array', 'bug-compare',
-  'thermo', 'weather', 'plant', 'smoke', 'motion', 'lock', 'parking',
+  'thermo', 'weather', 'plant', 'smoke', 'motion', 'lock', 'parking', 'phone', 'logger',
 ];
 LESSONS.sort((a, b) => ORDER.indexOf(a.id) - ORDER.indexOf(b.id));

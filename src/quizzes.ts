@@ -3,6 +3,22 @@
 export interface Question { q: string; a: string[]; correct: number; why: string }
 
 export const QUIZZES: Record<string, Question[]> = {
+  remote: [
+    { q: 'How does a TV remote send a button press?', a: ['A fast pattern of invisible infrared flashes', 'Radio waves like Wi-Fi', 'A tiny sound'], correct: 0, why: 'Each button blinks its own pattern of infrared light; the receiver turns it back into a code number.' },
+    { q: 'Why call IrReceiver.resume() after reading a code?', a: ['So the receiver is ready for the next button', 'To turn the LED off', 'It sends the code back'], correct: 0, why: 'decode() holds on to one code until you resume(); then it can catch the next one.' },
+  ],
+  scoreboard: [
+    { q: 'Why does score++ in loop() jump by hundreds while the button is held?', a: ['loop() runs thousands of times a second while it stays down', 'The button bounces 100 times', 'The display adds extra'], correct: 0, why: 'Count the change from up to down (an edge), not every loop the button is down.' },
+    { q: 'What does display.showNumberDec(7, true) show?', a: ['0007', '   7', '7000'], correct: 0, why: 'The second argument asks for leading zeros.' },
+  ],
+  phone: [
+    { q: 'Why use SoftwareSerial for the Bluetooth module?', a: ['Pins 0 and 1 are busy talking to the computer', 'Bluetooth needs analog pins', 'It makes the LED brighter'], correct: 0, why: 'SoftwareSerial creates an extra serial port on any two pins, leaving the USB serial free.' },
+    { q: 'The module’s TXD pin connects to the board’s…', a: ['RX pin', 'TX pin', '5V pin'], correct: 0, why: 'Transmit goes to receive: what the module sends, the board receives.' },
+  ],
+  logger: [
+    { q: 'What does FILE_WRITE do in SD.open("log.txt", FILE_WRITE)?', a: ['Adds new text to the end of the file (and creates it if needed)', 'Deletes the file', 'Only reads it'], correct: 0, why: 'Opening for writing appends, so every reading is kept.' },
+    { q: 'Why is “3,24.50” a useful line format?', a: ['It’s CSV: spreadsheets split it into columns', 'It uses less battery', 'SD cards need commas'], correct: 0, why: 'Comma-separated values open straight into a spreadsheet as a table.' },
+  ],
   'bug-pinmode': [
     { q: 'Why was the LED dim with pinMode(LED, INPUT)?', a: ['An INPUT pin only turns on a weak pull-up, not real power', 'INPUT pins blink slower', 'The LED was broken'], correct: 0, why: 'Writing HIGH to an INPUT pin just switches on its tiny internal pull-up resistor: enough to glow faintly, nowhere near enough to light an LED.' },
     { q: 'What is the first step of fixing a bug?', a: ['Run it and watch exactly what happens', 'Rewrite all the code', 'Buy a new board'], correct: 0, why: 'Good bug hunters observe first. The symptoms usually point straight at the cause.' },
