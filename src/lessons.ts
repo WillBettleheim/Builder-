@@ -1538,6 +1538,10 @@ void setup() {
 void loop() {
   float t = dht.readTemperature();
   float h = dht.readHumidity();
+  Serial.print(t);
+  Serial.print(" C  ");
+  Serial.print(h);
+  Serial.println(" %");
 
   lcd.setCursor(0, 0);
   lcd.print("Temp: ");
