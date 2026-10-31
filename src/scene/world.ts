@@ -47,6 +47,11 @@ export class World {
   onChange: () => void = () => {};
   onWiresChanged: (newIssues: Issue[]) => void = () => {};
   onFrame: (dt: number) => void = () => {};
+  onProbe: () => void = () => {};
+
+  /** Multimeter: while active, clicking terminals places the red, then the black probe. */
+  probe = { active: false, red: null as string | null, black: null as string | null };
+  private probeMarks: Record<'red' | 'black', THREE.Group> = { red: probeMark('#e0362c'), black: probeMark('#26272b') };
 
   private wireGroup = new THREE.Group();
   private hitGroup = new THREE.Group();
@@ -166,6 +171,7 @@ export class World {
     this.hoverDot.renderOrder = 20;
     this.hoverDot.visible = false;
     this.scene.add(this.hoverDot);
+    this.scene.add(this.probeMarks.red, this.probeMarks.black);
 
     this.scene.add(this.wireGroup, this.hitGroup);
 
@@ -591,6 +597,12 @@ export class World {
 
   get isWiring() { return !!this.wiring; }
 
+  setProbeMode(on: boolean) {
+    this.probe = { active: on, red: null, black: null };
+    if (on) this.cancelWiring();
+    this.onProbe();
+  }
+
   cancelWiring() {
     this.wiring = null;
     this.clearTempWire();
@@ -622,6 +634,13 @@ export class World {
     this.audio.unlock();
     const ep = this.pickTerminal(e);
 
+    if (this.probe.active && ep) {
+      const pr = this.probe;
+      if (!pr.red || pr.black) { pr.red = ep; pr.black = null; } else pr.black = ep;
+      this.audio.sfx('probe');
+      this.onProbe();
+      return;
+    }
     if (this.wiring?.sticky) {
       // second click of click-click wiring
       if (ep && ep !== this.wiring.from && this.addWire(this.wiring.from, ep)) this.audio.sfx('snap');
@@ -774,6 +793,11 @@ export class World {
       this.selRing.position.set(sel.x, 0.03, sel.z);
       this.selRing.visible = true;
     } else this.selRing.visible = false;
+    for (const k of ['red', 'black'] as const) {
+      const at = this.probe.active && this.probe[k] ? this.endpointPos(this.probe[k]!) : null;
+      this.probeMarks[k].visible = !!at;
+      if (at) this.probeMarks[k].position.copy(at);
+    }
     if (this.hoverDot.visible) this.hoverDot.scale.setScalar(1 + Math.sin(performance.now() / 150) * 0.15);
     this.updateSpill();
     const outlined = [this.selected, this.hoverPart].filter((p): p is Part => !!p?.group).map(p => p.group!);
@@ -782,6 +806,24 @@ export class World {
     this.controls.update();
     this.composer.render();
   }
+}
+
+/** A multimeter probe resting on a terminal: a coloured handle and a steel tip. */
+function probeMark(color: string): THREE.Group {
+  const g = new THREE.Group();
+  const handleMat = new THREE.MeshStandardMaterial({ color, roughness: 0.45 });
+  const tip = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.9, 12), new THREE.MeshStandardMaterial({ color: '#d5d8dc', metalness: 0.9, roughness: 0.25 }));
+  tip.rotation.x = Math.PI; // point down
+  tip.position.y = 0.45;
+  const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.17, 2.2, 16), handleMat);
+  handle.position.y = 2.0;
+  const guard = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 0.12, 16), handleMat);
+  guard.position.y = 0.95;
+  g.add(tip, handle, guard);
+  g.rotation.z = 0.35; // leaning, like a hand-held probe
+  g.visible = false;
+  g.traverse(o => { o.castShadow = true; });
+  return g;
 }
 
 function matTexture(t: Theme): THREE.Texture {
