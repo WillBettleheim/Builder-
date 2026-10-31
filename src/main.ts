@@ -243,6 +243,7 @@ const sentText: string[] = [];
 let hadError = false;
 function showError(err: CompileError | RuntimeError, kind: string) {
   hadError = true;
+  world.audio.sfx('error');
   errorEl.hidden = false;
   errorEl.innerHTML = `<b>${kind} error on line ${err.line}</b><span>${esc(err.message)}</span>`;
   editor.showError(err.line);
@@ -372,6 +373,7 @@ function checkGoals() {
       const bar = guideEl.querySelector<HTMLElement>('.g-progress i');
       if (bar) bar.style.width = `${(done.filter(Boolean).length / lesson.goals.length) * 100}%`;
       const wasComplete = done.every(Boolean);
+      world.audio.sfx(wasComplete ? 'complete' : 'goal');
       save();
       renderProgress();
       renderTray();
@@ -598,6 +600,7 @@ function award(id: string) {
   const b = BADGES.find(x => x.id === id);
   if (!b) return;
   saved.badges[id] = Date.now();
+  world.audio.sfx('badge');
   toast(`<span class="badge-toast">${b.icon}</span> <b>Badge earned: ${esc(b.name)}</b><br><small>${esc(b.how)}</small>`, 'good', 6000);
   renderBadges();
   save();
@@ -1014,7 +1017,7 @@ world.onWiresChanged = issues => {
     award('first-wire');
     if (saved.stats.wires >= 25) award('wire-25');
   }
-  if (issues.some(i => i.key.startsWith('short'))) award('short');
+  if (issues.some(i => i.key.startsWith('short'))) { world.audio.sfx('zap'); award('short'); }
   for (const i of issues) nova.enabled ? nova.say(`Careful! ${esc(i.text)}`, { mood: 'wow' }) : toast(esc(i.text), 'error', 9000);
   renderInspector();
 };
@@ -1117,6 +1120,7 @@ trayEl.addEventListener('click', e => {
     world.placeFree(part);
     world.solveCircuit(false);
     world.select(part);
+    world.audio.sfx('place');
     save();
   }
 });
