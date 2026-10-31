@@ -41,6 +41,7 @@ export class Board implements Host {
   lcds = new Map<number, LcdState>(); // I2C address -> display contents
   neopixels = new Map<number, { pixels: number[]; brightness: number }>(); // data pin -> last show()
   oleds = new Map<number, Uint8Array>(); // I2C address -> last display() frame
+  matrices = new Map<string, { rows: number[]; intensity: number; shutdown: boolean }>(); // 'din,clk,cs' -> LED matrix
   steppers = new Map<string, { steps: number; perRev: number }>(); // sorted coil pins -> position
 
   // history used by lesson goals
@@ -73,6 +74,7 @@ export class Board implements Host {
     this.lastLevels?.clear();
     this.neopixels.clear();
     this.oleds?.clear();
+    this.matrices?.clear();
     this.steppers?.clear();
     this.transitions.clear();
     this.pwmSeen.clear();
@@ -174,6 +176,8 @@ export class Board implements Host {
   }
 
   oledShow(addr: number, pixels: Uint8Array) { this.oleds.set(addr, pixels); }
+
+  matrixUpdate(key: string, state: { rows: number[]; intensity: number; shutdown: boolean }) { this.matrices.set(key, state); }
 
   stepperMove(pins: number[], _perRev: number, delta: number) {
     const key = [...pins].sort((a, b) => a - b).join(',');

@@ -40,6 +40,7 @@ export interface Host {
   glyph(ch: string): Uint8Array | null; // 6×8 bitmap for OLED text
   stepperMove(pins: number[], stepsPerRev: number, delta: number): void;
   keypadKey(rowPins: number[], colPins: number[]): [number, number] | null;
+  matrixUpdate(key: string, state: { rows: number[]; intensity: number; shutdown: boolean }): void;
 }
 
 export interface LcdState { addr: number; cols: number; rows: number; lines: string[]; cx: number; cy: number; backlight: boolean; begun: boolean; display: boolean }
@@ -61,7 +62,7 @@ export const CONSTANTS: Record<string, number> = {
 };
 const FLOAT_CONSTANTS = new Set(['PI', 'HALF_PI', 'TWO_PI', 'DEG_TO_RAD', 'RAD_TO_DEG']);
 const FLOAT_FUNCS = new Set(['sqrt', 'pow', 'sin', 'cos', 'tan', 'atan', 'atan2', 'asin', 'acos', 'exp', 'log', 'log10', 'floor', 'ceil', 'fabs', 'radians', 'degrees', 'sq']);
-const SIZES: Record<string, number> = { int: 2, uint: 2, long: 4, ulong: 4, float: 4, bool: 1, byte: 1, char: 1, String: 6, Servo: 3, LCD: 4, NeoPixel: 20, DHT: 4, OLED: 8, Stepper: 12, Keypad: 16 };
+const SIZES: Record<string, number> = { int: 2, uint: 2, long: 4, ulong: 4, float: 4, bool: 1, byte: 1, char: 1, String: 6, Servo: 3, LCD: 4, NeoPixel: 20, DHT: 4, OLED: 8, Stepper: 12, Keypad: 16, Matrix: 12 };
 
 const STATEMENT_COST_MS = 0.004; // ~4µs per statement, roughly a 16 MHz AVR
 const STEP_BUDGET = 40000; // max statements per animation frame
@@ -274,7 +275,7 @@ export class Interpreter {
 
   private *declareVar(type: string, d: Node): Gen<void> {
     if (type === 'void') throw new RuntimeError('Variables cannot have type void', d.line);
-    if (['Servo', 'LCD', 'NeoPixel', 'DHT', 'OLED', 'Stepper', 'Keypad'].includes(type)) {
+    if (['Servo', 'LCD', 'NeoPixel', 'DHT', 'OLED', 'Stepper', 'Keypad', 'Matrix'].includes(type)) {
       if (d.isArray) throw new RuntimeError(`Arrays of ${type} objects are not supported`, d.line);
       // "Keypad k = Keypad(...)" is the same as "Keypad k(...)"
       let ctor: Node[] = d.ctorArgs ?? [];
@@ -337,6 +338,11 @@ export class Interpreter {
     if (type === 'Stepper') {
       if (args.length !== 5) throw new RuntimeError('Create it with steps per turn and 4 pins: Stepper motor(2048, 8, 10, 9, 11);', d.line);
       return { perRev: args[0], pins: args.slice(1), rpm: 0, pos: 0 };
+    }
+    if (type === 'Matrix') {
+      if (args.length < 3) throw new RuntimeError('Create it with its pins: LedControl lc = LedControl(DIN, CLK, CS, 1);', d.line);
+      // the MAX7219 starts asleep, just like the real chip
+      return { key: `${args[0]},${args[1]},${args[2]}`, rows: Array(8).fill(0), intensity: 8, shutdown: true };
     }
     if (type === 'Keypad') {
       if (args.length !== 5) throw new RuntimeError('Create it like: Keypad keypad = Keypad(makeKeymap(keys), rowPins, colPins, ROWS, COLS);', d.line);
@@ -970,6 +976,39 @@ export class Interpreter {
     if (v.type === 'LCD') return this.lcdCall(v.value as LcdState, prop, args, n);
     if (v.type === 'NeoPixel') return this.neoCall(v.value, prop, args, n);
     if (v.type === 'OLED') return this.oledCall(v.value, prop, args, n);
+    if (v.type === 'Matrix') {
+      const mx = v.value;
+      const push = () => this.host.matrixUpdate(mx.key, { rows: [...mx.rows], intensity: mx.intensity, shutdown: mx.shutdown });
+      const drawing = () => { if (mx.shutdown) this.host.hint('lcwake', 'The LED matrix starts asleep: call lc.shutdown(0, false) in setup() to wake it.'); };
+      const inRange = (x: number) => Number.isInteger(x) && x >= 0 && x < 8;
+      switch (prop) {
+        case 'shutdown': mx.shutdown = !!args[1]; push(); return;
+        case 'setIntensity': mx.intensity = Math.max(0, Math.min(15, args[1])); push(); return;
+        case 'clearDisplay': mx.rows.fill(0); push(); return;
+        case 'setLed':
+          drawing();
+          if (!inRange(args[1]) || !inRange(args[2])) throw new RuntimeError(`setLed(addr, row, col, state): row and column go from 0 to 7, not ${args[1]}, ${args[2]}`, n.line);
+          if (args[3]) mx.rows[args[1]] |= 0x80 >> args[2]; else mx.rows[args[1]] &= ~(0x80 >> args[2]);
+          push();
+          return;
+        case 'setRow':
+          drawing();
+          if (!inRange(args[1])) throw new RuntimeError(`setRow(addr, row, value): row goes from 0 to 7, not ${args[1]}`, n.line);
+          mx.rows[args[1]] = args[2] & 0xff;
+          push();
+          return;
+        case 'setColumn':
+          drawing();
+          if (!inRange(args[1])) throw new RuntimeError(`setColumn(addr, col, value): column goes from 0 to 7, not ${args[1]}`, n.line);
+          for (let r = 0; r < 8; r++) {
+            if ((args[2] >> (7 - r)) & 1) mx.rows[r] |= 0x80 >> args[1]; else mx.rows[r] &= ~(0x80 >> args[1]);
+          }
+          push();
+          return;
+        case 'getDeviceCount': return 1;
+      }
+      throw new RuntimeError(`The LED matrix has no method "${prop}()"`, n.line);
+    }
     if (v.type === 'Keypad') {
       const k = v.value;
       if (prop !== 'getKey') throw new RuntimeError(`The keypad has no method "${prop}()". Use keypad.getKey()`, n.line);

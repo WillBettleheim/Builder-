@@ -25,7 +25,7 @@ const QUALIFIERS = new Set(['const', 'static', 'volatile', 'unsigned', 'signed',
 const TYPE_WORDS = new Set([
   'void', 'int', 'long', 'short', 'unsigned', 'signed', 'float', 'double', 'bool', 'boolean', 'byte', 'char',
   'word', 'String', 'size_t', 'uint8_t', 'uint16_t', 'uint32_t', 'int8_t', 'int16_t', 'int32_t', 'uint64_t',
-  'int64_t', 'Servo', 'LiquidCrystal_I2C', 'LiquidCrystal', 'Adafruit_NeoPixel', 'DHT', 'Adafruit_SSD1306', 'Stepper', 'Keypad', 'const', 'static', 'volatile',
+  'int64_t', 'Servo', 'LiquidCrystal_I2C', 'LiquidCrystal', 'Adafruit_NeoPixel', 'DHT', 'Adafruit_SSD1306', 'Stepper', 'Keypad', 'LedControl', 'const', 'static', 'volatile',
 ]);
 
 /** Collapse C type spellings to the handful of storage types the interpreter models. */
@@ -45,6 +45,7 @@ function normalizeType(words: string[], line: number): string {
   if (has('Adafruit_SSD1306')) return 'OLED';
   if (has('Stepper')) return 'Stepper';
   if (has('Keypad')) return 'Keypad';
+  if (has('LedControl')) return 'Matrix';
   if (has('LiquidCrystal')) throw new CompileError('This simulator has the I2C LCD: use #include <LiquidCrystal_I2C.h> and LiquidCrystal_I2C lcd(0x27, 16, 2);', line);
   if (has('byte') || has('uint8_t') || (unsigned && has('char'))) return 'byte';
   if (has('char') || has('int8_t')) return 'char';
@@ -59,7 +60,7 @@ const BINARY_PREC: Record<string, number> = {
   '||': 1, '&&': 2, '|': 3, '^': 4, '&': 5, '==': 6, '!=': 6,
   '<': 7, '>': 7, '<=': 7, '>=': 7, '<<': 8, '>>': 8, '+': 9, '-': 9, '*': 10, '/': 10, '%': 10,
 };
-const OBJECT_TYPES = new Set(['Servo', 'LCD', 'NeoPixel', 'DHT', 'OLED', 'Stepper', 'Keypad']);
+const OBJECT_TYPES = new Set(['Servo', 'LCD', 'NeoPixel', 'DHT', 'OLED', 'Stepper', 'Keypad', 'Matrix']);
 const ASSIGN_OPS = new Set(['=', '+=', '-=', '*=', '/=', '%=', '&=', '|=', '^=', '<<=', '>>=']);
 
 export function parse(src: string): Program {
