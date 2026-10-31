@@ -157,26 +157,32 @@ export class Instructor {
   }
 
   /**
-   * Use realistic renders instead of the drawing when they exist: <base>/happy.png (required),
-   * plus optional talk.png, think.png and concern.png. Missing files just keep the drawing.
+   * Use realistic images instead of the drawing when they exist: <base>/happy (required),
+   * plus optional talk, think and concern, each as .png, .jpg or .webp. Missing files keep the drawing.
    */
   usePhotos(base: string) {
     const moods: Mood[] = ['happy', 'talk', 'think', 'concern'];
+    const exts = ['png', 'jpg', 'jpeg', 'webp'];
     for (const m of moods) {
-      const url = `${base}/${m}.png`;
-      const img = new Image();
-      img.onload = () => {
-        this.photos[m] = url;
-        if (m === 'happy' && !this.photo) {
-          this.photo = document.createElement('img');
-          this.photo.alt = '';
-          this.photo.src = url;
-          const fig = this.root.querySelector('.ins-figure')!;
-          fig.classList.add('photo-mode');
-          fig.appendChild(this.photo);
-        }
+      const tryExt = (i: number) => {
+        if (i >= exts.length) return;
+        const url = `${base}/${m}.${exts[i]}`;
+        const img = new Image();
+        img.onerror = () => tryExt(i + 1);
+        img.onload = () => {
+          this.photos[m] = url;
+          if (m === 'happy' && !this.photo) {
+            this.photo = document.createElement('img');
+            this.photo.alt = '';
+            this.photo.src = url;
+            const fig = this.root.querySelector('.ins-figure')!;
+            fig.classList.add('photo-mode');
+            fig.appendChild(this.photo);
+          }
+        };
+        img.src = url;
       };
-      img.src = url;
+      tryExt(0);
     }
   }
 
