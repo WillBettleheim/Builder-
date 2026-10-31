@@ -708,3 +708,5 @@ body.instructor-on .guide { max-height: calc(100% - 40px); }
 }
 .ins.talking .ins-figure.photo-mode img { box-shadow: 0 16px 34px -12px rgba(0, 0, 0, 0.55), 0 0 0 4px color-mix(in srgb, var(--accent) 40%, transparent); }
 @media (max-width: 1000px) { .ins-figure.photo-mode { width: 112px; height: 150px; } }
+/* phones: a smaller portrait that sits clear of the scene toolbar */
+@media (max-width: 600px) { .ins-figure.photo-mode { width: 84px; height: 112px; } }
