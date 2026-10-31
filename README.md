@@ -47,4 +47,4 @@ Every push to `main` is tested and built by GitHub Actions. To publish it on Git
 
 ### Realistic instructor art
 
-Nova is drawn in SVG by default. To use realistic renders instead, add transparent PNGs of her to `public/nova/`: `happy.png` (required), plus `talk.png`, `think.png` and `concern.png` (optional). They're picked up automatically and swapped by mood.
+Nova is drawn in SVG by default. To use realistic renders instead, add images to `public/nova/`: `happy` (required), plus `talk`, `think` and `concern` (optional), each as `.png`, `.jpg` or `.webp`. Any background works; they're shown in a rounded portrait tile and swapped by mood.
