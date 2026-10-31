@@ -698,7 +698,13 @@ body.instructor-on .guide { max-height: calc(100% - 40px); }
 .switch-row input { accent-color: var(--accent); margin-top: 2px; }
 @media (max-width: 1000px) { body.instructor-on .status { right: 8px; top: 8px; bottom: auto; } }
 /* realistic photo mode: waist-up renders replace the drawing */
-.ins-figure.photo-mode { width: 176px; height: 235px; }
+.ins-figure.photo-mode { width: 168px; height: 224px; margin-bottom: 8px; animation: none; filter: none; }
 .ins-figure.photo-mode svg { display: none; }
-.ins-figure.photo-mode img { width: 100%; height: 100%; object-fit: contain; object-position: bottom; }
+/* photos sit in a rounded portrait tile, so any background works */
+.ins-figure.photo-mode img {
+  width: 100%; height: 100%; object-fit: cover; object-position: center top; display: block;
+  border-radius: 18px; border: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  box-shadow: 0 16px 34px -12px rgba(0, 0, 0, 0.55), 0 0 0 4px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.ins.talking .ins-figure.photo-mode img { box-shadow: 0 16px 34px -12px rgba(0, 0, 0, 0.55), 0 0 0 4px color-mix(in srgb, var(--accent) 40%, transparent); }
 @media (max-width: 1000px) { .ins-figure.photo-mode { width: 112px; height: 150px; } }
