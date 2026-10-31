@@ -23,6 +23,16 @@ describe('arithmetic and types', () => {
     expect(out('String s = "cm: " + String(42); s += "!"; Serial.println(s);')).toEqual(['cm: 42!']);
   });
 
+  it('supports function-style casts like float(x) and int(x)', () => {
+    expect(out('Serial.println(int(3.9)); Serial.println(byte(260)); Serial.println(float(1) / 4); Serial.println(long(5) * 2);')).toEqual(['3', '4', '0.25', '10']);
+  });
+
+  it('switches the pull-up off when a pin goes back to INPUT', () => {
+    const { board } = runSketch('void setup() { pinMode(4, INPUT_PULLUP); pinMode(4, INPUT); }\nvoid loop() {}', 50);
+    expect(board.pins[4].value).toBe(0);
+    expect(board.level(4)).toBe(0);
+  });
+
   it('prints chars as letters', () => {
     expect(out("char c = 'A'; c++; Serial.println(c);")).toEqual(['B']);
   });

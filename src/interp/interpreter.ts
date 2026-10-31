@@ -67,6 +67,9 @@ const SIZES: Record<string, number> = { int: 2, uint: 2, long: 4, ulong: 4, floa
 const STATEMENT_COST_MS = 0.004; // ~4µs per statement, roughly a 16 MHz AVR
 const STEP_BUDGET = 40000; // max statements per animation frame
 
+/** Function-style casts like float(x) and the type each one produces. */
+const CAST_TYPES: Record<string, string> = { float: 'float', int: 'int', long: 'long', byte: 'byte', char: 'char', word: 'uint' };
+
 function wrap(v: number, bits: number, signed: boolean): number {
   const mod = 2 ** bits;
   let r = ((Math.trunc(v) % mod) + mod) % mod;
@@ -403,6 +406,7 @@ export class Interpreter {
           const name = n.callee.name;
           if (FLOAT_FUNCS.has(name)) return 'float';
           if (name === 'String') return 'String';
+          if (name in CAST_TYPES) return CAST_TYPES[name];
           if (name === 'millis' || name === 'micros' || name === 'pulseIn') return 'ulong';
           if (['abs', 'min', 'max', 'constrain'].includes(name)) {
             return n.args.some((a: Node) => this.typeOf(a) === 'float') ? 'float' : 'long';
@@ -737,6 +741,8 @@ export class Interpreter {
       case 'makeKeymap': return args[0];
       case 'bitRead': need(2); return (args[0] >> args[1]) & 1;
       case 'bitSet': throw new RuntimeError('bitSet() is not supported — use x |= (1 << n)', n.line);
+      case 'float': case 'int': case 'long': case 'byte': case 'char': case 'word':
+        need(1); return coerce(CAST_TYPES[name], args[0]);
       case 'String': {
         if (args.length === 0) return '';
         if (args.length === 2 && typeof args[0] === 'number') {
