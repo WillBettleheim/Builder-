@@ -7,6 +7,7 @@ import { PALETTE, PARTS, newPart, type Part } from './sim/parts';
 import { World, partThumbnail, wireColor } from './scene/world';
 import { measure, type MeterMode } from './sim/meter';
 import { liveSchematic, renderSchematic } from './ui/schematic';
+import { pack, unpack } from './ui/codec';
 import { WIRE_COLORS, autoWires, endpoint, endpointLabel, nearestGround, newWireId, type Wire } from './sim/circuit';
 import { CodeEditor } from './ui/editor';
 import { runTour } from './ui/tour';
@@ -849,9 +850,6 @@ function timeAgo(t: number): string {
 }
 
 // ---------- share by link ----------
-const b64url = (bytes: Uint8Array) => btoa(Array.from(bytes, b => String.fromCharCode(b)).join('')).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-const unb64url = (s: string) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
-
 /** Keep only known parts from a shared link or imported file, with sane numbers. */
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
 const cleanParts = (list: any[]): SavedPart[] => {
@@ -865,16 +863,6 @@ const cleanParts = (list: any[]): SavedPart[] => {
 /** Keep only well-formed wires from a shared link or imported file. */
 const cleanWires = (w: unknown): Wire[] | undefined =>
   Array.isArray(w) ? w.filter((x: any) => x && typeof x.a === 'string' && typeof x.b === 'string').map((x: any) => ({ id: typeof x.id === 'string' ? x.id : newWireId(), a: x.a, b: x.b, color: typeof x.color === 'string' ? x.color : '#3b82c4' })) : undefined;
-
-async function pack(data: unknown): Promise<string> {
-  const stream = new Blob([JSON.stringify(data)]).stream().pipeThrough(new CompressionStream('deflate-raw'));
-  return b64url(new Uint8Array(await new Response(stream).arrayBuffer()));
-}
-
-async function unpack(s: string): Promise<any> {
-  const stream = new Blob([unb64url(s)]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
-  return JSON.parse(await new Response(stream).text());
-}
 
 async function shareProject() {
   snapshotScene();
