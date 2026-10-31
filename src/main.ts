@@ -5,7 +5,7 @@ import { Interpreter, RuntimeError } from './interp/interpreter';
 import { PWM_PINS, pinName } from './sim/board';
 import { PALETTE, PARTS, newPart, type Part } from './sim/parts';
 import { World, partThumbnail, wireColor } from './scene/world';
-import { WIRE_COLORS, autoWires, endpoint, endpointLabel, nearestGround, type Wire } from './sim/circuit';
+import { WIRE_COLORS, autoWires, endpoint, endpointLabel, nearestGround, newWireId, type Wire } from './sim/circuit';
 import { CodeEditor } from './ui/editor';
 import { runTour } from './ui/tour';
 import { Plotter } from './ui/plotter';
@@ -697,6 +697,20 @@ function timeAgo(t: number): string {
 const b64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 const unb64url = (s: string) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
 
+/** Keep only known parts from a shared link or imported file, with sane numbers. */
+const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+const cleanParts = (list: any[]): SavedPart[] => {
+  const parts = list
+    .filter(p => p && typeof p.type === 'string' && PARTS[p.type])
+    .map(p => ({ ...p, x: num(p.x), z: num(p.z), rot: num(p.rot) & 3, pins: p.pins && typeof p.pins === 'object' ? p.pins : {}, props: p.props && typeof p.props === 'object' ? p.props : {} }));
+  if (!parts.some(p => p.type === 'uno')) parts.unshift(DEFAULT_SANDBOX.parts[0]);
+  return parts;
+};
+
+/** Keep only well-formed wires from a shared link or imported file. */
+const cleanWires = (w: unknown): Wire[] | undefined =>
+  Array.isArray(w) ? w.filter((x: any) => x && typeof x.a === 'string' && typeof x.b === 'string').map((x: any) => ({ id: typeof x.id === 'string' ? x.id : newWireId(), a: x.a, b: x.b, color: typeof x.color === 'string' ? x.color : '#3b82c4' })) : undefined;
+
 async function pack(data: unknown): Promise<string> {
   const stream = new Blob([JSON.stringify(data)]).stream().pipeThrough(new CompressionStream('deflate-raw'));
   return b64url(new Uint8Array(await new Response(stream).arrayBuffer()));
@@ -733,9 +747,8 @@ async function openSharedFromUrl(): Promise<boolean> {
   try {
     const d = await unpack(m[1]);
     if (typeof d.code !== 'string' || !Array.isArray(d.parts)) throw new Error('bad link');
-    const parts = d.parts.filter((p: any) => p && typeof p.type === 'string' && PARTS[p.type]);
-    if (!parts.some((p: any) => p.type === 'uno')) parts.unshift(DEFAULT_SANDBOX.parts[0]);
-    createProject(`${String(d.name ?? 'Shared project').slice(0, 50)} (shared)`, { code: d.code, parts, wires: Array.isArray(d.wires) ? d.wires : undefined });
+    const parts = cleanParts(d.parts);
+    createProject(`${String(d.name ?? 'Shared project').slice(0, 50)} (shared)`, { code: d.code, parts, wires: cleanWires(d.wires) });
     toast('Opened a shared project. It’s your own copy, so change anything you like.', 'good', 6000);
     return true;
   } catch {
@@ -772,9 +785,8 @@ function importProject() {
     try {
       const data = JSON.parse(await file.text());
       if (typeof data.code !== 'string' || !Array.isArray(data.parts)) throw new Error('bad file');
-      const parts = data.parts.filter((p: any) => p && typeof p.type === 'string' && PARTS[p.type]);
-      if (!parts.some((p: any) => p.type === 'uno')) parts.unshift(DEFAULT_SANDBOX.parts[0]);
-      createProject(typeof data.name === 'string' ? data.name : file.name.replace(/\.json$/i, ''), { code: data.code, parts, wires: Array.isArray(data.wires) ? data.wires : undefined });
+      const parts = cleanParts(data.parts);
+      createProject(typeof data.name === 'string' ? data.name : file.name.replace(/\.json$/i, ''), { code: data.code, parts, wires: cleanWires(data.wires) });
       toast(`Imported <b>${esc(file.name)}</b>`, 'good', 3000);
     } catch {
       toast('That file isn’t a Builder project.', 'error');
