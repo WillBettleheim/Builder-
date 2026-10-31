@@ -443,6 +443,7 @@ export class World {
   }
 
   removeWire(w: Wire) {
+    this.audio.sfx('unsnap');
     this.wires = this.wires.filter(x => x !== w);
     if (this.selectedWire === w) this.selectWire(null);
     this.solveCircuit(true);
@@ -623,7 +624,7 @@ export class World {
 
     if (this.wiring?.sticky) {
       // second click of click-click wiring
-      if (ep && ep !== this.wiring.from) this.addWire(this.wiring.from, ep);
+      if (ep && ep !== this.wiring.from && this.addWire(this.wiring.from, ep)) this.audio.sfx('snap');
       this.cancelWiring();
       return;
     }
@@ -657,6 +658,7 @@ export class World {
       // a joystick click (without dragging) presses its built-in button
       part.state.pressed = true;
       part.state.key = hit.keyIndex ?? null; // which key, on a keypad
+      this.audio.sfx('press');
       this.onChange();
     }
     this.controls.enabled = false;
@@ -715,7 +717,7 @@ export class World {
         this.updateTempWire(e);
         return;
       }
-      if (ep && ep !== this.wiring.from) this.addWire(this.wiring.from, ep);
+      if (ep && ep !== this.wiring.from && this.addWire(this.wiring.from, ep)) this.audio.sfx('snap');
       this.cancelWiring();
       return;
     }
@@ -734,6 +736,7 @@ export class World {
       setTimeout(() => { p.state.pressed = false; }, 220);
     }
     if (d.mode === 'stick') { d.part.state.sx = 0; d.part.state.sy = 0; d.part.state.pressed = false; }
+    if (d.moved && d.mode === 'move') this.audio.sfx('place');
     if (!d.moved || d.mode !== 'move') this.select(d.part);
     if (d.moved || d.mode === 'press') this.onChange();
   }

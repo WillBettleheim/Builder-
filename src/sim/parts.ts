@@ -306,7 +306,49 @@ export class AudioOut {
   silenceAll() {
     for (const id of this.voices.keys()) this.set(id, null);
   }
+
+  /** Interface sounds, synthesized so there are no files to load. Phones also get a buzz. */
+  sfx(kind: Sfx) {
+    const buzz = HAPTICS[kind];
+    if (buzz && !this.muted) navigator.vibrate?.(buzz);
+    const ctx = this.ctx;
+    if (!ctx || this.muted || ctx.state !== 'running') return;
+    const t0 = ctx.currentTime;
+    const out = ctx.createGain();
+    out.gain.value = 0.22;
+    out.connect(ctx.destination);
+    // a short pitched blip with a fast attack and exponential decay
+    const blip = (freq: number, at: number, len: number, type: OscillatorType = 'sine', vol = 1, slideTo?: number) => {
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, t0 + at);
+      if (slideTo) osc.frequency.exponentialRampToValueAtTime(slideTo, t0 + at + len);
+      g.gain.setValueAtTime(0.0001, t0 + at);
+      g.gain.exponentialRampToValueAtTime(vol, t0 + at + 0.006);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + at + len);
+      osc.connect(g).connect(out);
+      osc.start(t0 + at);
+      osc.stop(t0 + at + len + 0.02);
+    };
+    switch (kind) {
+      case 'place': blip(180, 0, 0.09, 'triangle', 0.9, 90); this.click(); break;
+      case 'snap': blip(1400, 0, 0.04, 'square', 0.25); blip(2100, 0.035, 0.05, 'sine', 0.5); break;
+      case 'unsnap': blip(900, 0, 0.06, 'triangle', 0.5, 400); break;
+      case 'press': blip(2400, 0, 0.025, 'square', 0.18); break;
+      case 'probe': blip(1760, 0, 0.05, 'sine', 0.5); break;
+      case 'beep': blip(2093, 0, 0.18, 'sine', 0.55); break;
+      case 'goal': blip(784, 0, 0.12, 'triangle', 0.7); blip(1175, 0.09, 0.2, 'triangle', 0.7); break;
+      case 'complete': [523, 659, 784, 1047].forEach((f, i) => blip(f, i * 0.09, i === 3 ? 0.45 : 0.14, 'triangle', 0.75)); break;
+      case 'badge': blip(1319, 0, 0.1, 'sine', 0.6); blip(1760, 0.07, 0.1, 'sine', 0.6); blip(2637, 0.14, 0.3, 'sine', 0.5); break;
+      case 'error': blip(220, 0, 0.16, 'sawtooth', 0.35); blip(165, 0.12, 0.22, 'sawtooth', 0.35); break;
+      case 'zap': blip(3000, 0, 0.25, 'sawtooth', 0.4, 60); this.click(); break;
+    }
+  }
 }
+
+export type Sfx = 'place' | 'snap' | 'unsnap' | 'press' | 'probe' | 'beep' | 'goal' | 'complete' | 'badge' | 'error' | 'zap';
+const HAPTICS: Partial<Record<Sfx, number | number[]>> = { place: 12, snap: 8, press: 6, goal: [15, 40, 25], complete: [20, 50, 20, 50, 60], error: [40, 30, 40], zap: 80 };
 
 // ---------- the board ----------
 export const UNO_TOP = 0.46;
