@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { LESSONS } from '../lessons';
 import { QUIZZES } from '../quizzes';
 import { PARTS } from '../sim/parts';
+import { RuntimeError } from '../interp/interpreter';
 import { runSketch } from './helpers';
 
 describe('lessons', () => {
@@ -16,7 +17,10 @@ describe('lessons', () => {
       });
 
       it('starter code runs', () => {
-        expect(() => runSketch(l.code, 3000)).not.toThrow();
+        // a bug hunt may start with a sketch that crashes on purpose, but it must still compile
+        if (l.level === 'Debug') {
+          try { runSketch(l.code, 3000); } catch (e) { expect(e).toBeInstanceOf(RuntimeError); }
+        } else expect(() => runSketch(l.code, 3000)).not.toThrow();
       });
 
       it('solution runs', () => {

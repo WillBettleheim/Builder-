@@ -33,7 +33,7 @@ export interface Lesson {
   title: string;
   icon: string; // part type used for the thumbnail
   iconProps?: Record<string, any>;
-  level: 'Basics' | 'Displays' | 'Sensors' | 'Motion' | 'Projects';
+  level: 'Basics' | 'Displays' | 'Sensors' | 'Motion' | 'Debug' | 'Projects';
   intro: string;
   parts: PartSpec[];
   code: string;
@@ -2245,11 +2245,267 @@ void loop() {
 });
 
 // Canonical order: grouped by level, easiest first within each group.
+// ---------- bug hunts: broken sketches and circuits to fix ----------
+const HUNT_METHOD = `
+<p class="hunt-steps"><strong>How bug hunters work:</strong> ① read the bug report ② press <strong>Run</strong> and watch closely ③ guess the cause ④ change <em>one</em> thing and run again.</p>`;
+
+/** Longest stretch (ms of wall time) a condition has held, tracked in goal memory. */
+function heldFor(c: GoalCtx, m: Record<string, any>, key: string, cond: boolean): number {
+  if (!cond) { m[key] = null; return 0; }
+  m[key] ??= c.now;
+  return c.now - m[key];
+}
+
+LESSONS.push(
+  {
+    id: 'bug-pinmode',
+    title: 'Bug Hunt: The Dim LED',
+    icon: 'led',
+    iconProps: { color: 'yellow' },
+    level: 'Debug',
+    intro: `
+<p class="bug-report">🐞 <strong>Bug report:</strong> “My LED is blinking, but it’s so dim I can barely see it!”</p>
+<p>The code turns pin 8 on and off every half second, and the wiring is fine. So why is it so faint?</p>
+<p><strong>Clue:</strong> a pin has to be told what job it does before it can power anything.</p>${HUNT_METHOD}`,
+    parts: [BOARD, { type: 'led', x: 11, z: -3, pins: { pin: 8 }, props: { color: 'yellow' } }],
+    code: `const int LED = 8;
+
+void setup() {
+  pinMode(LED, INPUT);
+}
+
+void loop() {
+  digitalWrite(LED, HIGH);
+  delay(500);
+  digitalWrite(LED, LOW);
+  delay(500);
+}
+`,
+    solution: `const int LED = 8;
+
+void setup() {
+  pinMode(LED, OUTPUT);   // OUTPUT can power the LED; INPUT only trickles a weak pull-up
+}
+
+void loop() {
+  digitalWrite(LED, HIGH);
+  delay(500);
+  digitalWrite(LED, LOW);
+  delay(500);
+}
+`,
+    goals: [
+      { text: 'Make the LED blink at full brightness', check: (c, m) => { const l = c.part('led'); return seen(m, 'on', (l?.state.level ?? 0) > 0.5) && seen(m, 'off', !!m.on && l?.state.level === 0); } },
+      { text: 'Keep the timing: on for half a second each blink', check: c => highPulses(c.board, 8).filter(d => Math.abs(d - 500) < 60).length >= 2 },
+    ],
+  },
+  {
+    id: 'bug-wiring',
+    title: 'Bug Hunt: Crossed Wires',
+    icon: 'traffic',
+    level: 'Debug',
+    intro: `
+<p class="bug-report">🐞 <strong>Bug report:</strong> “It should be <span style="color:#e2533b">red</span> for 2 seconds, then <span style="color:#3fae5a">green</span> for 1. Mine does it the wrong way round!”</p>
+<p>This time the code is fine. Follow each wire from the board to its LED, and compare with the pin numbers in the code.</p>
+<p>You can fix it two ways: <strong>move the wires</strong>, or <strong>change the numbers</strong> in the code. Either is a real fix.</p>${HUNT_METHOD}`,
+    parts: [BOARD, { type: 'led', x: 11, z: -3, pins: { pin: 10 }, props: { color: 'red' } }, { type: 'led', x: 14, z: -3, pins: { pin: 9 }, props: { color: 'green' } }],
+    code: `const int RED = 9, GREEN = 10;
+
+void setup() {
+  pinMode(RED, OUTPUT);
+  pinMode(GREEN, OUTPUT);
+}
+
+void loop() {
+  digitalWrite(RED, HIGH);
+  delay(2000);
+  digitalWrite(RED, LOW);
+
+  digitalWrite(GREEN, HIGH);
+  delay(1000);
+  digitalWrite(GREEN, LOW);
+}
+`,
+    solution: `const int RED = 10, GREEN = 9;   // match the pins the wires really go to
+
+void setup() {
+  pinMode(RED, OUTPUT);
+  pinMode(GREEN, OUTPUT);
+}
+
+void loop() {
+  digitalWrite(RED, HIGH);
+  delay(2000);
+  digitalWrite(RED, LOW);
+
+  digitalWrite(GREEN, HIGH);
+  delay(1000);
+  digitalWrite(GREEN, LOW);
+}
+`,
+    goals: [
+      { text: 'The red LED stays on for 2 seconds', check: c => { const pin = c.parts.find(p => p.type === 'led' && p.props.color === 'red')?.pins.pin; return pin != null && highPulses(c.board, pin).some(d => Math.abs(d - 2000) < 150); } },
+      { text: 'Then the green LED for 1 second', check: c => { const pin = c.parts.find(p => p.type === 'led' && p.props.color === 'green')?.pins.pin; return pin != null && highPulses(c.board, pin).some(d => Math.abs(d - 1000) < 150); } },
+    ],
+  },
+  {
+    id: 'bug-button',
+    title: 'Bug Hunt: The Ghost Button',
+    icon: 'button',
+    level: 'Debug',
+    intro: `
+<p class="bug-report">🐞 <strong>Bug report:</strong> “My LED flickers on <em>by itself</em> when nobody touches anything. And when I do press the button, it’s even weirder!”</p>
+<p>Look at how this button is wired: one leg goes to the pin, the other straight to <strong>GND</strong>. There’s no resistor holding the pin steady when the button is up.</p>
+<p><strong>Clue:</strong> there are <em>two</em> bugs. One is in <code>setup()</code>; the other is in the <code>if</code>.</p>${HUNT_METHOD}`,
+    parts: [BOARD, { type: 'button', x: 11, z: 4, pins: { pin: 2 }, props: { wiring: 'pullup' } }, { type: 'led', x: 11, z: -3, pins: { pin: 12 }, props: { color: 'blue' } }],
+    code: `const int BUTTON = 2, LED = 12;
+
+void setup() {
+  pinMode(BUTTON, INPUT);
+  pinMode(LED, OUTPUT);
+}
+
+void loop() {
+  if (digitalRead(BUTTON) == HIGH) {
+    digitalWrite(LED, HIGH);
+  } else {
+    digitalWrite(LED, LOW);
+  }
+}
+`,
+    solution: `const int BUTTON = 2, LED = 12;
+
+void setup() {
+  pinMode(BUTTON, INPUT_PULLUP);   // the built-in resistor holds the pin HIGH when the button is up
+  pinMode(LED, OUTPUT);
+}
+
+void loop() {
+  if (digitalRead(BUTTON) == LOW) {   // pressed connects the pin to GND, so pressed reads LOW
+    digitalWrite(LED, HIGH);
+  } else {
+    digitalWrite(LED, LOW);
+  }
+}
+`,
+    goals: [
+      { text: 'No ghosts: the LED stays dark for 2 seconds while nobody presses', check: (c, m) => seen(m, 'x', c.board.time > 300 && heldFor(c, m, 'calm', !c.part('button')?.state.pressed && c.part('led')?.state.level === 0) > 2000) },
+      { text: 'Hold the button: the LED stays lit', check: (c, m) => seen(m, 'x', heldFor(c, m, 'held', !!c.part('button')?.state.pressed && (c.part('led')?.state.level ?? 0) > 0.5) > 400) },
+    ],
+  },
+  {
+    id: 'bug-array',
+    title: 'Bug Hunt: Off by One',
+    icon: 'led',
+    iconProps: { color: 'green' },
+    level: 'Debug',
+    intro: `
+<p class="bug-report">🐞 <strong>Bug report:</strong> “My chaser runs once along the LEDs, then the whole thing crashes!”</p>
+<p>Read the error message carefully: it tells you the line, and which index went wrong.</p>
+<p><strong>Clue:</strong> an array of 6 items is numbered <code>0</code> to <code>5</code>. Count how many times the loop really runs.</p>${HUNT_METHOD}`,
+    parts: [BOARD, ...[2, 3, 4, 5, 6, 7].map((pin, i) => ({ type: 'led', x: 9 + i * 2.4, z: -3, pins: { pin }, props: { color: 'green' } }))],
+    code: `const int LEDS[] = {2, 3, 4, 5, 6, 7};
+const int COUNT = 6;
+
+void setup() {
+  for (int i = 0; i < COUNT; i++) {
+    pinMode(LEDS[i], OUTPUT);
+  }
+}
+
+void loop() {
+  for (int i = 0; i <= COUNT; i++) {
+    digitalWrite(LEDS[i], HIGH);
+    delay(150);
+    digitalWrite(LEDS[i], LOW);
+  }
+}
+`,
+    solution: `const int LEDS[] = {2, 3, 4, 5, 6, 7};
+const int COUNT = 6;
+
+void setup() {
+  for (int i = 0; i < COUNT; i++) {
+    pinMode(LEDS[i], OUTPUT);
+  }
+}
+
+void loop() {
+  for (int i = 0; i < COUNT; i++) {   // < not <=: the last index is COUNT - 1
+    digitalWrite(LEDS[i], HIGH);
+    delay(150);
+    digitalWrite(LEDS[i], LOW);
+  }
+}
+`,
+    goals: [
+      { text: 'Chase along all six LEDs twice in a row', check: (c, m) => { const i = litLedIndex(c); if (i >= 0 && i !== m.last) { m.run = i === ((m.last ?? -1) + 1) % 6 ? (m.run ?? 0) + 1 : i === 0 ? 1 : 0; m.last = i; } return seen(m, 'x', (m.run ?? 0) >= 12); } },
+      { text: 'Keep it running for 10 seconds without a crash', check: (c, m) => seen(m, 'x', c.board.time >= 10000) },
+    ],
+  },
+  {
+    id: 'bug-compare',
+    title: 'Bug Hunt: Always On',
+    icon: 'ldr',
+    level: 'Debug',
+    intro: `
+<p class="bug-report">🐞 <strong>Bug report:</strong> “My night light is <em>always</em> on, even in bright sunshine. The Serial Monitor shows the sensor working fine!”</p>
+<p>Watch the numbers in the Serial Monitor while you drag the light sensor. The readings change, so the sensor isn’t the problem.</p>
+<p><strong>Clue:</strong> in C++, <code>=</code> and <code>==</code> mean very different things. One <em>stores</em> a value; the other <em>asks</em> a question.</p>${HUNT_METHOD}`,
+    parts: [BOARD, { type: 'ldr', x: 11, z: 4, pins: { sig: 14 }, props: { light: 70 } }, { type: 'led', x: 12, z: -3, pins: { pin: 9 }, props: { color: 'yellow' } }],
+    code: `const int SENSOR = A0, LED = 9;
+const int DARK = 300;
+
+void setup() {
+  Serial.begin(9600);
+  pinMode(LED, OUTPUT);
+}
+
+void loop() {
+  int light = analogRead(SENSOR);
+  Serial.println(light);
+
+  if (light = DARK) {   // dark?
+    digitalWrite(LED, HIGH);
+  } else {
+    digitalWrite(LED, LOW);
+  }
+  delay(200);
+}
+`,
+    solution: `const int SENSOR = A0, LED = 9;
+const int DARK = 300;
+
+void setup() {
+  Serial.begin(9600);
+  pinMode(LED, OUTPUT);
+}
+
+void loop() {
+  int light = analogRead(SENSOR);
+  Serial.println(light);
+
+  if (light < DARK) {   // a comparison, not an assignment
+    digitalWrite(LED, HIGH);
+  } else {
+    digitalWrite(LED, LOW);
+  }
+  delay(200);
+}
+`,
+    goals: [
+      { text: 'Bright (above 60%): the LED is off', check: (c, m) => seen(m, 'x', heldFor(c, m, 'b', (c.part('ldr')?.props.light ?? 0) > 60 && c.part('led')?.state.level === 0) > 500) },
+      { text: 'Dark (below 25%): the LED turns on', check: (c, m) => seen(m, 'x', heldFor(c, m, 'd', (c.part('ldr')?.props.light ?? 100) < 25 && (c.part('led')?.state.level ?? 0) > 0.5) > 500) },
+    ],
+  },
+);
+
 const ORDER = [
   'blink', 'circuit', 'breadboard', 'fade', 'chaser', 'rgb', 'serial',
   'seg7', 'lcd', 'oled', 'matrix', 'neopixel',
   'button', 'millis', 'interrupts', 'pot', 'encoder', 'joystick', 'nightlight', 'sound', 'morse', 'clap', 'distance',
   'servo', 'stepper', 'motor', 'relay',
+  'bug-pinmode', 'bug-wiring', 'bug-button', 'bug-array', 'bug-compare',
   'thermo', 'weather', 'plant', 'smoke', 'motion', 'lock', 'parking',
 ];
 LESSONS.sort((a, b) => ORDER.indexOf(a.id) - ORDER.indexOf(b.id));

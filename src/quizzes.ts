@@ -3,6 +3,26 @@
 export interface Question { q: string; a: string[]; correct: number; why: string }
 
 export const QUIZZES: Record<string, Question[]> = {
+  'bug-pinmode': [
+    { q: 'Why was the LED dim with pinMode(LED, INPUT)?', a: ['An INPUT pin only turns on a weak pull-up, not real power', 'INPUT pins blink slower', 'The LED was broken'], correct: 0, why: 'Writing HIGH to an INPUT pin just switches on its tiny internal pull-up resistor: enough to glow faintly, nowhere near enough to light an LED.' },
+    { q: 'What is the first step of fixing a bug?', a: ['Run it and watch exactly what happens', 'Rewrite all the code', 'Buy a new board'], correct: 0, why: 'Good bug hunters observe first. The symptoms usually point straight at the cause.' },
+  ],
+  'bug-wiring': [
+    { q: 'The code and the wires disagree. Which is “right”?', a: ['Either: they just have to match each other', 'Always the code', 'Always the wires'], correct: 0, why: 'The board only knows pin numbers. Swap the wires or swap the numbers; both make code and circuit agree.' },
+    { q: 'How can you check which pin an LED is really on?', a: ['Follow its wire back to the board', 'Look at its colour', 'Guess from the code'], correct: 0, why: 'Tracing each wire from end to end is how real builders check a circuit.' },
+  ],
+  'bug-button': [
+    { q: 'Why did the LED flicker with nothing pressed?', a: ['The input pin was floating and picked up noise', 'The LED was loose', 'loop() ran too slowly'], correct: 0, why: 'With no resistor holding it HIGH or LOW, an input pin “floats” and reads random values.' },
+    { q: 'With INPUT_PULLUP, what does a pressed button read?', a: ['LOW', 'HIGH', 'A random value'], correct: 0, why: 'The pull-up holds the pin HIGH; pressing connects it to GND, so it reads LOW.' },
+  ],
+  'bug-array': [
+    { q: 'An array has 6 items. What is the last valid index?', a: ['5', '6', '7'], correct: 0, why: 'Arrays count from 0, so 6 items are numbered 0 to 5.' },
+    { q: 'Which loop visits each of COUNT items exactly once?', a: ['for (i = 0; i < COUNT; i++)', 'for (i = 0; i <= COUNT; i++)', 'for (i = 1; i <= COUNT + 1; i++)'], correct: 0, why: 'Starting at 0 and stopping before COUNT gives exactly COUNT steps: 0 … COUNT−1.' },
+  ],
+  'bug-compare': [
+    { q: 'What does if (light = 300) actually do?', a: ['Stores 300 in light, which counts as true', 'Checks whether light equals 300', 'Causes a compile error'], correct: 0, why: 'A single = assigns. The result, 300, isn’t zero, so the if is always true.' },
+    { q: 'Which line checks whether light is below 300?', a: ['if (light < 300)', 'if (light = 300)', 'if (light =< 300)'], correct: 0, why: '< compares. == checks equality. A single = is assignment, never a question.' },
+  ],
   blink: [
     { q: 'How many times does setup() run?', a: ['Once, when the board starts', 'Over and over', 'Once per second'], correct: 0, why: 'setup() runs once at power-on; loop() is the part that repeats forever.' },
     { q: 'What does delay(500) do?', a: ['Waits half a second', 'Waits 500 seconds', 'Blinks 500 times'], correct: 0, why: 'delay() counts in milliseconds, and 1000 ms is one second.' },
