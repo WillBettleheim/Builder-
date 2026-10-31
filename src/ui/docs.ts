@@ -85,6 +85,12 @@ export const DOCS: Record<string, Doc> = {
   'Stepper.setSpeed': { sig: 'motor.setSpeed(rpm)', doc: 'How fast to turn, in revolutions per minute. Set it before step().' },
   'Stepper.step': { sig: 'motor.step(steps)', doc: 'Turn a number of steps (negative turns backwards). Waits until finished. 2048 steps is one full turn.' },
   'Keypad.getKey': { sig: 'keypad.getKey() → char', doc: 'The key just pressed, or 0 (NO_KEY) if none. Each press is reported once.' },
+  'Matrix.shutdown': { sig: 'lc.shutdown(0, false)', doc: 'Wake the display (true puts it to sleep). It starts asleep, so call this in setup().' },
+  'Matrix.setIntensity': { sig: 'lc.setIntensity(0, 0–15)', doc: 'Brightness of the whole matrix.' },
+  'Matrix.clearDisplay': { sig: 'lc.clearDisplay(0)', doc: 'Turn every LED off.' },
+  'Matrix.setLed': { sig: 'lc.setLed(0, row, col, true/false)', doc: 'Switch one LED. Rows and columns go 0–7 from the top-left.' },
+  'Matrix.setRow': { sig: 'lc.setRow(0, row, B01100110)', doc: 'Set a whole row at once: each 1 bit is a lit LED, left to right.' },
+  'Matrix.setColumn': { sig: 'lc.setColumn(0, col, B00111100)', doc: 'Set a whole column at once, top to bottom.' },
   makeKeymap: { sig: 'makeKeymap(keys)', doc: 'Turns your 2D array of key labels into a keymap for Keypad().' },
   'String.length': { sig: 'text.length()', doc: 'Number of characters.' },
   'String.toInt': { sig: 'text.toInt()', doc: 'Convert "42" to the number 42.' },
@@ -101,14 +107,14 @@ const CONST_DOCS: Record<string, string> = {
 };
 for (const [k, v] of Object.entries(CONST_DOCS)) DOCS[k] = { sig: k, doc: v, kind: 'const' };
 
-const TYPES = ['int', 'long', 'unsigned long', 'float', 'bool', 'byte', 'char', 'String', 'void', 'const', 'volatile', 'Servo', 'LiquidCrystal_I2C', 'Adafruit_NeoPixel', 'DHT', 'Adafruit_SSD1306', 'Stepper', 'Keypad'];
+const TYPES = ['int', 'long', 'unsigned long', 'float', 'bool', 'byte', 'char', 'String', 'void', 'const', 'volatile', 'Servo', 'LiquidCrystal_I2C', 'Adafruit_NeoPixel', 'DHT', 'Adafruit_SSD1306', 'Stepper', 'Keypad', 'LedControl'];
 const KEYWORDS = ['if', 'else', 'for', 'while', 'do', 'switch', 'case', 'break', 'continue', 'return', 'default'];
 export const PLAIN_WORDS = [...TYPES, ...KEYWORDS];
 
 /** Object kind for a variable, found by scanning its declaration. */
 export function objectKind(code: string, name: string): string | null {
   if (name === 'Serial') return 'Serial';
-  const m = code.match(new RegExp(`\\b(Servo|LiquidCrystal_I2C|Adafruit_NeoPixel|DHT|Adafruit_SSD1306|Stepper|Keypad|String)\\s+${name}\\b`));
+  const m = code.match(new RegExp(`\\b(Servo|LiquidCrystal_I2C|Adafruit_NeoPixel|DHT|Adafruit_SSD1306|Stepper|Keypad|LedControl|String)\\s+${name}\\b`));
   if (!m) return null;
-  return { Servo: 'Servo', LiquidCrystal_I2C: 'LCD', Adafruit_NeoPixel: 'NeoPixel', DHT: 'DHT', Adafruit_SSD1306: 'OLED', Stepper: 'Stepper', Keypad: 'Keypad', String: 'String' }[m[1]] ?? null;
+  return { Servo: 'Servo', LiquidCrystal_I2C: 'LCD', Adafruit_NeoPixel: 'NeoPixel', DHT: 'DHT', Adafruit_SSD1306: 'OLED', Stepper: 'Stepper', Keypad: 'Keypad', LedControl: 'Matrix', String: 'String' }[m[1]] ?? null;
 }

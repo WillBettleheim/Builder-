@@ -1055,11 +1055,11 @@ function renderTray() {
 // ---------- parts tray filtering ----------
 const PART_CATEGORIES: Record<string, string[]> = {
   Lights: ['led', 'rgb', 'traffic', 'neopixel'],
-  Inputs: ['button', 'keypad', 'pot', 'joystick'],
-  Sensors: ['ldr', 'temp', 'dht', 'soil', 'pir', 'ultrasonic'],
-  Displays: ['seg7', 'lcd', 'oled'],
+  Inputs: ['button', 'keypad', 'pot', 'encoder', 'joystick'],
+  Sensors: ['ldr', 'temp', 'dht', 'soil', 'gas', 'sound', 'hall', 'pir', 'ultrasonic'],
+  Displays: ['seg7', 'lcd', 'oled', 'matrix'],
   Motion: ['servo', 'stepper', 'motor', 'relay', 'buzzer'],
-  Other: ['breadboard', 'car'],
+  Other: ['breadboard', 'magnet', 'car'],
 };
 const partFilter = { text: '', cat: 'All' };
 

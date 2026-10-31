@@ -29,6 +29,11 @@ const SHOPPING: Record<string, { item: string; extras?: string[] }> = {
   oled: { item: '0.96" SSD1306 OLED display, 128×64, I2C' },
   neopixel: { item: 'WS2812B (NeoPixel) LED strip' },
   keypad: { item: '4×4 membrane keypad' },
+  encoder: { item: 'KY-040 rotary encoder module' },
+  matrix: { item: '8×8 LED matrix with MAX7219 driver module' },
+  hall: { item: 'KY-003 Hall effect sensor module', extras: ['Small neodymium magnet'] },
+  sound: { item: 'KY-037 sound sensor module' },
+  gas: { item: 'MQ-2 gas / smoke sensor module' },
 };
 
 const COLOR_NAMES: Record<string, string> = {
@@ -44,7 +49,7 @@ function libraries(code: string): string[] {
   const known: Record<string, string> = {
     'Servo.h': 'Servo', 'LiquidCrystal_I2C.h': 'LiquidCrystal I2C', 'Adafruit_NeoPixel.h': 'Adafruit NeoPixel',
     'DHT.h': 'DHT sensor library', 'Adafruit_SSD1306.h': 'Adafruit SSD1306 (and Adafruit GFX)', 'Stepper.h': 'Stepper',
-    'Keypad.h': 'Keypad',
+    'Keypad.h': 'Keypad', 'LedControl.h': 'LedControl',
   };
   return [...code.matchAll(/#include\s*<([\w.]+)>/g)].map(m => known[m[1]]).filter(Boolean);
 }

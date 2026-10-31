@@ -3,7 +3,7 @@
 import { DOCS, PLAIN_WORDS, objectKind } from './docs';
 
 const KEYWORDS = new Set(['if', 'else', 'for', 'while', 'do', 'return', 'break', 'continue', 'switch', 'case', 'default', 'const', 'static', 'volatile', 'sizeof']);
-const TYPES = new Set(['void', 'int', 'long', 'short', 'unsigned', 'signed', 'float', 'double', 'bool', 'boolean', 'byte', 'char', 'word', 'String', 'Servo', 'DHT', 'LiquidCrystal_I2C', 'Adafruit_NeoPixel', 'Adafruit_SSD1306', 'Stepper', 'Keypad', 'size_t', 'uint8_t', 'uint16_t', 'uint32_t', 'int8_t', 'int16_t', 'int32_t']);
+const TYPES = new Set(['void', 'int', 'long', 'short', 'unsigned', 'signed', 'float', 'double', 'bool', 'boolean', 'byte', 'char', 'word', 'String', 'Servo', 'DHT', 'LiquidCrystal_I2C', 'Adafruit_NeoPixel', 'Adafruit_SSD1306', 'Stepper', 'Keypad', 'LedControl', 'size_t', 'uint8_t', 'uint16_t', 'uint32_t', 'int8_t', 'int16_t', 'int32_t']);
 const CONSTS = new Set(['HIGH', 'LOW', 'INPUT', 'OUTPUT', 'INPUT_PULLUP', 'LED_BUILTIN', 'true', 'false', 'A0', 'A1', 'A2', 'A3', 'A4', 'A5', 'PI', 'DEC', 'HEX', 'BIN', 'OCT', 'RISING', 'FALLING', 'CHANGE', 'DHT11', 'DHT22', 'SSD1306_WHITE', 'SSD1306_BLACK', 'SSD1306_SWITCHCAPVCC', 'NO_KEY']);
 const BUILTINS = new Set(['pinMode', 'digitalWrite', 'digitalRead', 'analogWrite', 'analogRead', 'delay', 'delayMicroseconds', 'millis', 'micros', 'tone', 'noTone', 'pulseIn', 'map', 'constrain', 'min', 'max', 'abs', 'random', 'Serial', 'setup', 'loop', 'sqrt', 'pow', 'sin', 'cos', 'attachInterrupt', 'digitalPinToInterrupt']);
 
