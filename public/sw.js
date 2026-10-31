@@ -1,5 +1,5 @@
 // Offline support: pages come from the network when possible (so updates arrive),
-// everything else is served from the cache first and stored as it's fetched.
+// everything else is served from the cache first and refreshed in the background.
 const CACHE = 'builder-v1';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 const FONT_HOSTS = ['fonts.googleapis.com', 'fonts.gstatic.com'];
@@ -34,13 +34,20 @@ self.addEventListener('fetch', event => {
     return;
   }
 
+  // serve from the cache straight away, but refresh it in the background so replaced
+  // files with fixed names (Nova's photos, icons) don't stay stale forever
   event.respondWith(
-    caches.match(req).then(hit => hit ?? fetch(req).then(res => {
-      if (res.ok || res.type === 'opaque') {
-        const copy = res.clone();
-        caches.open(CACHE).then(c => c.put(req, copy));
-      }
-      return res;
-    })),
+    caches.match(req).then(hit => {
+      if (hit && url.pathname.includes('/assets/')) return hit; // content-hashed: never changes
+      const fresh = fetch(req).then(res => {
+        if (res.ok || res.type === 'opaque') {
+          const copy = res.clone();
+          caches.open(CACHE).then(c => c.put(req, copy));
+        }
+        return res;
+      });
+      if (hit) fresh.catch(() => {});
+      return hit ?? fresh;
+    }),
   );
 });
