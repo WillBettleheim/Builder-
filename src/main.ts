@@ -5,6 +5,7 @@ import { Interpreter, RuntimeError } from './interp/interpreter';
 import { PWM_PINS, pinName } from './sim/board';
 import { PALETTE, PARTS, newPart, type Part } from './sim/parts';
 import { World, partThumbnail, wireColor } from './scene/world';
+import { measure, type MeterMode } from './sim/meter';
 import { WIRE_COLORS, autoWires, endpoint, endpointLabel, nearestGround, newWireId, type Wire } from './sim/circuit';
 import { CodeEditor } from './ui/editor';
 import { runTour } from './ui/tour';
@@ -121,6 +122,7 @@ function serializeParts(): SavedPart[] {
  */
 function loadParts(parts: (SavedPart | PartSpec)[], wires?: Wire[], idPrefix?: string) {
   world.clear();
+  world.probe.red = world.probe.black = null; // probes don't carry over to another scene
   parts.forEach((s, i) => {
     if (!PARTS[s.type]) return;
     world.addPart(newPart(s.type, { ...s, id: (s as SavedPart).id ?? (idPrefix ? `${idPrefix}-${i}` : undefined), locked: s.type === 'uno' || (s as SavedPart).locked }));
@@ -336,6 +338,8 @@ world.onFrame = dt => {
     if (running) editor.setRunLine(interp.currentLine || null);
     checkGoals();
   }
+  // the meter follows live pin changes, a few times a second like a real one
+  if (!meterEl.hidden && performance.now() - meterAt > 120) { meterAt = performance.now(); updateMeter(); }
   plotter.draw();
   if (plotter.visible && plotter.hasData && running) award('plotter');
   if (running && !paused) timeline.record(world.board, pinTracks());
@@ -347,6 +351,47 @@ world.onFrame = dt => {
     if (nearBottom) serialOut.scrollTop = serialOut.scrollHeight;
   }
 };
+
+// ---------- multimeter ----------
+const meterEl = $('meter');
+const meterBtn = $<HTMLButtonElement>('meter-btn');
+let meterMode: MeterMode = 'volts';
+let meterBeeping = false;
+let meterAt = 0;
+
+function setMeter(on: boolean) {
+  meterEl.hidden = !on;
+  meterBtn.setAttribute('aria-pressed', String(on));
+  world.setProbeMode(on);
+}
+meterBtn.onclick = () => setMeter(meterEl.hidden);
+$('meter-close').onclick = () => setMeter(false);
+meterEl.querySelector('.meter-modes')!.addEventListener('click', e => {
+  const b = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-mode]');
+  if (!b) return;
+  meterMode = b.dataset.mode as MeterMode;
+  for (const x of meterEl.querySelectorAll('[data-mode]')) x.setAttribute('aria-pressed', String(x === b));
+  meterBeeping = false;
+  updateMeter();
+});
+
+function updateMeter() {
+  if (meterEl.hidden) return;
+  const { red, black } = world.probe;
+  const r = measure(world.parts, world.wires, world.board, running, meterMode, red, black);
+  const text = (id: string, t: string) => { const el = $(id); if (el.textContent !== t) el.textContent = t; };
+  text('meter-value', r.display);
+  text('meter-unit', r.unit);
+  text('meter-note', r.note);
+  text('meter-red', red ? endpointLabel(world.parts, red) : 'click a terminal');
+  text('meter-black', black ? endpointLabel(world.parts, black) : red ? 'click a second terminal' : '—');
+  // a real meter beeps the moment both probes touch the same connection
+  if (r.connected && !meterBeeping) world.audio.sfx('beep');
+  meterBeeping = !!r.connected;
+  meterEl.querySelector('.meter-lcd')!.classList.toggle('beep', meterBeeping);
+  if (red && black && meterMode === 'volts' && r.display !== '- - -') award('meter');
+}
+world.onProbe = updateMeter;
 
 // ---------- goals ----------
 function currentGoals() { return mode === 'lessons' ? lesson.goals : []; }
@@ -1330,6 +1375,7 @@ window.addEventListener('keydown', e => {
   }
   if (e.key === 'Escape') {
     if (world.isWiring) world.cancelWiring();
+    else if (!meterEl.hidden) setMeter(false);
     else world.select(null);
     $('help-pop').hidden = true;
   }

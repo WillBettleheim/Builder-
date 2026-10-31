@@ -88,6 +88,8 @@
             <button id="view-reset" title="Reset view"><svg viewBox="0 0 20 20"><path d="M4 10a6 6 0 1 0 2-4.5M4 3v3h3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></button>
             <button id="zoom-out" title="Zoom out"><svg viewBox="0 0 20 20"><path d="M5 10h10" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></button>
             <button id="zoom-in" title="Zoom in"><svg viewBox="0 0 20 20"><path d="M5 10h10M10 5v10" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></button>
+            <span class="tool-sep"></span>
+            <button id="meter-btn" title="Multimeter: measure voltage and check connections" aria-pressed="false"><svg viewBox="0 0 20 20"><rect x="4.5" y="2.5" width="11" height="15" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="7" y="5" width="6" height="3.2" rx=".6" fill="currentColor"/><circle cx="10" cy="12.6" r="2.2" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></button>
             <button id="help" title="Controls"><svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="7" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5M10 6.2v.1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
           </div>
           <div class="help-pop card" id="help-pop" hidden>
@@ -102,6 +104,16 @@
               <li><kbd>R</kbd> rotate selected · <kbd>Del</kbd> remove (sandbox)</li>
               <li><kbd>Ctrl/⌘</kbd>+<kbd>Enter</kbd> run · <kbd>Ctrl/⌘</kbd>+<kbd>/</kbd> comment</li>
             </ul>
+          </div>
+          <div class="meter card" id="meter" hidden>
+            <div class="meter-head"><b>Multimeter</b><button class="mini ghost icon" id="meter-close" aria-label="Close multimeter">×</button></div>
+            <div class="meter-lcd" aria-live="polite"><span id="meter-value">0.00</span><small id="meter-unit">V</small></div>
+            <div class="meter-modes" role="group" aria-label="Meter mode">
+              <button data-mode="volts" aria-pressed="true">V ⎓ Voltage</button>
+              <button data-mode="ohms" aria-pressed="false">Ω 🔊 Continuity</button>
+            </div>
+            <p class="meter-note" id="meter-note"></p>
+            <div class="meter-probes"><span><i class="dot red"></i><em id="meter-red">no probe</em></span><span><i class="dot black"></i><em id="meter-black">no probe</em></span></div>
           </div>
           <div class="status" id="status"><i></i><span>Stopped</span></div>
           <div class="toasts" id="toasts"></div>
