@@ -1160,9 +1160,9 @@ function renderTray() {
 // ---------- parts tray filtering ----------
 const PART_CATEGORIES: Record<string, string[]> = {
   Lights: ['led', 'rgb', 'traffic', 'neopixel'],
-  Inputs: ['button', 'keypad', 'pot', 'encoder', 'joystick'],
+  Inputs: ['button', 'keypad', 'pot', 'encoder', 'joystick', 'ir'],
   Sensors: ['ldr', 'temp', 'dht', 'soil', 'gas', 'sound', 'hall', 'pir', 'ultrasonic'],
-  Displays: ['seg7', 'lcd', 'oled', 'matrix'],
+  Displays: ['seg7', 'digits', 'lcd', 'oled', 'matrix'],
   Motion: ['servo', 'stepper', 'motor', 'relay', 'buzzer'],
   Other: ['breadboard', 'magnet', 'car'],
 };
@@ -1230,6 +1230,7 @@ function openLesson(l: Lesson, fresh = false) {
   lastProgress = Date.now();
   if (!tourActive) setTimeout(() => { if (lesson === l && mode === 'lessons') novaLessonIntro(); }, 900);
 }
+  Connect: ['bluetooth', 'sdcard'],
 
 function openSandbox() {
   stop();

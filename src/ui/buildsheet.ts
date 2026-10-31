@@ -34,6 +34,10 @@ const SHOPPING: Record<string, { item: string; extras?: string[] }> = {
   hall: { item: 'KY-003 Hall effect sensor module', extras: ['Small neodymium magnet'] },
   sound: { item: 'KY-037 sound sensor module' },
   gas: { item: 'MQ-2 gas / smoke sensor module' },
+  ir: { item: 'VS1838B IR receiver module + 21-button NEC remote' },
+  bluetooth: { item: 'HC-05 Bluetooth module', extras: ['1 kΩ resistor', '2 kΩ resistor (divider for its 3.3 V RXD pin)'] },
+  digits: { item: 'TM1637 4-digit 7-segment display module' },
+  sdcard: { item: 'Micro SD card module (SPI) + micro SD card' },
 };
 
 const COLOR_NAMES: Record<string, string> = {

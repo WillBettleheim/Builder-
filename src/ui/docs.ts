@@ -97,24 +97,48 @@ export const DOCS: Record<string, Doc> = {
   'String.indexOf': { sig: 'text.indexOf(x)', doc: 'Position of x in the text, or -1.' },
   'String.substring': { sig: 'text.substring(from [, to])', doc: 'Part of the text.' },
   'String.trim': { sig: 'text.trim()', doc: 'Remove spaces and new lines from both ends.' },
+
+  'IrReceiver.begin': { sig: 'IrReceiver.begin(pin, ENABLE_LED_FEEDBACK)', doc: 'Start listening for remote-control codes on a pin. Call once in setup().' },
+  'IrReceiver.decode': { sig: 'IrReceiver.decode() → true / false', doc: 'True when a button code has arrived. Read it from IrReceiver.decodedIRData.command.' },
+  'IrReceiver.resume': { sig: 'IrReceiver.resume()', doc: 'Get ready for the next code. Call it after handling each one.' },
+  'SoftSerial.begin': { sig: 'bt.begin(9600)', doc: 'Start the Bluetooth link. HC-05 modules talk at 9600 baud.' },
+  'SoftSerial.available': { sig: 'bt.available() → count', doc: 'How many characters from the phone are waiting.' },
+  'SoftSerial.read': { sig: 'bt.read() → char or -1', doc: 'Read one character sent from the phone.' },
+  'SoftSerial.readString': { sig: 'bt.readString() → String', doc: 'Read everything the phone sent as text.' },
+  'SoftSerial.print': { sig: 'bt.print(value)', doc: 'Send text or a number to the phone.' },
+  'SoftSerial.println': { sig: 'bt.println(value)', doc: 'Send text to the phone, then a new line.' },
+  'SD.begin': { sig: 'SD.begin(csPin) → true / false', doc: 'Start the SD card. False means no card answered: check the wiring.' },
+  'SD.open': { sig: 'SD.open("name.txt" [, FILE_WRITE]) → File', doc: 'Open a file. FILE_WRITE adds to the end (and creates it); without it the file is read.' },
+  'SD.exists': { sig: 'SD.exists("name.txt") → true / false', doc: 'Is there a file with this name?' },
+  'SD.remove': { sig: 'SD.remove("name.txt")', doc: 'Delete a file from the card.' },
+  'File.println': { sig: 'file.println(value)', doc: 'Write text to the file, then a new line.' },
+  'File.print': { sig: 'file.print(value)', doc: 'Write text or a number to the file.' },
+  'File.available': { sig: 'file.available() → count', doc: 'How many characters are left to read.' },
+  'File.read': { sig: 'file.read() → char or -1', doc: 'Read the next character of the file.' },
+  'File.close': { sig: 'file.close()', doc: 'Finish with the file. Always close it, or the last writes can be lost on real cards.' },
+  'Digits.setBrightness': { sig: 'display.setBrightness(0–7)', doc: 'How bright the digits glow. 7 is brightest.' },
+  'Digits.showNumberDec': { sig: 'display.showNumberDec(number [, leadingZeros])', doc: 'Show a number from -999 to 9999. showNumberDec(7, true) shows 0007.' },
+  'Digits.showNumberDecEx': { sig: 'display.showNumberDecEx(number, 0b01000000, leadingZeros)', doc: 'Like showNumberDec, with dots: 0b01000000 lights the colon, great for clocks.' },
+  'Digits.clear': { sig: 'display.clear()', doc: 'Blank all four digits.' },
+  'Digits.setSegments': { sig: 'display.setSegments(data [, length, position])', doc: 'Light exact segments: each byte is SEG_A … SEG_G added together.' },
 };
 
 const CONST_DOCS: Record<string, string> = {
   HIGH: '1: 5 volts, on', LOW: '0: 0 volts, off', INPUT: 'pin mode: read a signal', OUTPUT: 'pin mode: send power out',
   INPUT_PULLUP: 'input with a built-in resistor to 5 V: unpressed reads HIGH', LED_BUILTIN: 'pin 13, the on-board "L" LED',
   A0: 'analog pin 0', A1: 'analog pin 1', A2: 'analog pin 2', A3: 'analog pin 3', A4: 'analog pin 4 (I2C SDA)', A5: 'analog pin 5 (I2C SCL)',
-  true: '1', false: '0', RISING: 'interrupt when a pin goes LOW → HIGH', FALLING: 'interrupt when a pin goes HIGH → LOW', CHANGE: 'interrupt on any change', DHT11: 'the blue DHT11 sensor', DHT22: 'the more precise white DHT22 sensor', SSD1306_WHITE: 'pixel on', SSD1306_BLACK: 'pixel off', NO_KEY: '0: no key pressed', PI: '3.14159…', NEO_GRB: 'pixel colour order for most strips', NEO_KHZ800: '800 kHz data speed',
+  true: '1', false: '0', RISING: 'interrupt when a pin goes LOW → HIGH', FALLING: 'interrupt when a pin goes HIGH → LOW', CHANGE: 'interrupt on any change', DHT11: 'the blue DHT11 sensor', DHT22: 'the more precise white DHT22 sensor', SSD1306_WHITE: 'pixel on', SSD1306_BLACK: 'pixel off', NO_KEY: '0: no key pressed', PI: '3.14159…', NEO_GRB: 'pixel colour order for most strips', NEO_KHZ800: '800 kHz data speed', FILE_WRITE: 'open a file to add to it', FILE_READ: 'open a file to read it', ENABLE_LED_FEEDBACK: 'flash the receiver’s LED when a code arrives',
 };
 for (const [k, v] of Object.entries(CONST_DOCS)) DOCS[k] = { sig: k, doc: v, kind: 'const' };
 
-const TYPES = ['int', 'long', 'unsigned long', 'float', 'bool', 'byte', 'char', 'String', 'void', 'const', 'volatile', 'Servo', 'LiquidCrystal_I2C', 'Adafruit_NeoPixel', 'DHT', 'Adafruit_SSD1306', 'Stepper', 'Keypad', 'LedControl'];
+const TYPES = ['int', 'long', 'unsigned long', 'float', 'bool', 'byte', 'char', 'String', 'void', 'const', 'volatile', 'Servo', 'LiquidCrystal_I2C', 'Adafruit_NeoPixel', 'DHT', 'Adafruit_SSD1306', 'Stepper', 'Keypad', 'LedControl', 'SoftwareSerial', 'File', 'TM1637Display'];
 const KEYWORDS = ['if', 'else', 'for', 'while', 'do', 'switch', 'case', 'break', 'continue', 'return', 'default'];
 export const PLAIN_WORDS = [...TYPES, ...KEYWORDS];
 
 /** Object kind for a variable, found by scanning its declaration. */
 export function objectKind(code: string, name: string): string | null {
-  if (name === 'Serial') return 'Serial';
-  const m = code.match(new RegExp(`\\b(Servo|LiquidCrystal_I2C|Adafruit_NeoPixel|DHT|Adafruit_SSD1306|Stepper|Keypad|LedControl|String)\\s+${name}\\b`));
+  if (name === 'Serial' || name === 'SD' || name === 'IrReceiver') return name;
+  const m = code.match(new RegExp(`\\b(Servo|LiquidCrystal_I2C|Adafruit_NeoPixel|DHT|Adafruit_SSD1306|Stepper|Keypad|LedControl|SoftwareSerial|File|TM1637Display|String)\\s+${name}\\b`));
   if (!m) return null;
-  return { Servo: 'Servo', LiquidCrystal_I2C: 'LCD', Adafruit_NeoPixel: 'NeoPixel', DHT: 'DHT', Adafruit_SSD1306: 'OLED', Stepper: 'Stepper', Keypad: 'Keypad', LedControl: 'Matrix', String: 'String' }[m[1]] ?? null;
+  return { Servo: 'Servo', LiquidCrystal_I2C: 'LCD', Adafruit_NeoPixel: 'NeoPixel', DHT: 'DHT', Adafruit_SSD1306: 'OLED', Stepper: 'Stepper', Keypad: 'Keypad', LedControl: 'Matrix', SoftwareSerial: 'SoftSerial', File: 'File', TM1637Display: 'Digits', String: 'String' }[m[1]] ?? null;
 }
