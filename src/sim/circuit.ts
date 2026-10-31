@@ -44,11 +44,13 @@ export function endpointLabel(parts: Part[], ep: string): string {
   return `${PARTS[part.type].name} · ${t?.label ?? key}`;
 }
 
+export interface NetInfo { pins: number[]; power: boolean; ground: boolean }
+
 /**
- * Recompute part.pins and part.state.missing from the wires.
- * Returns problems worth telling the user about (shorts, pins tied to power...).
+ * Group endpoints that are joined by wires (and by connections inside parts, like a
+ * breadboard's strips) into nets, and note what each net touches on the board.
  */
-export function solve(parts: Part[], wires: Wire[]): Issue[] {
+export function buildNets(parts: Part[], wires: Wire[]) {
   const parent = new Map<string, string>();
   const find = (x: string): string => {
     let r = x;
@@ -73,8 +75,7 @@ export function solve(parts: Part[], wires: Wire[]): Issue[] {
   }
 
   const uno = parts.find(p => p.type === 'uno');
-  // what each net touches on the board
-  const nets = new Map<string, { pins: number[]; power: boolean; ground: boolean }>();
+  const nets = new Map<string, NetInfo>();
   const net = (root: string) => {
     let n = nets.get(root);
     if (!n) nets.set(root, (n = { pins: [], power: false, ground: false }));
@@ -90,6 +91,21 @@ export function solve(parts: Part[], wires: Wire[]): Issue[] {
       else n.ground = true;
     }
   }
+  return {
+    nets,
+    /** The net an endpoint belongs to, or null when nothing is wired to it. */
+    rootOf: (ep: string) => (parent.has(ep) ? find(ep) : null),
+    /** What a wired endpoint reaches on the board (undefined when its net touches none of it). */
+    infoOf: (ep: string) => (parent.has(ep) ? nets.get(find(ep)) : undefined),
+  };
+}
+
+/**
+ * Recompute part.pins and part.state.missing from the wires.
+ * Returns problems worth telling the user about (shorts, pins tied to power...).
+ */
+export function solve(parts: Part[], wires: Wire[]): Issue[] {
+  const { nets, infoOf } = buildNets(parts, wires);
 
   const issues: Issue[] = [];
   for (const [root, n] of nets) {
@@ -104,8 +120,7 @@ export function solve(parts: Part[], wires: Wire[]): Issue[] {
     if (part.type === 'uno') continue;
     const missing: string[] = [];
     for (const t of PARTS[part.type].terminals(part)) {
-      const ep = endpoint(part.id, t.key);
-      const n = parent.has(ep) ? nets.get(find(ep)) : undefined;
+      const n = infoOf(endpoint(part.id, t.key));
       if (t.kind === 'pass') continue;
       if (t.kind === 'signal') {
         part.pins[t.key] = n?.pins[0] ?? null;
