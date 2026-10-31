@@ -44,3 +44,7 @@ Every push to `main` is tested and built by GitHub Actions. To publish it on Git
 | `src/main.ts` | App shell tying it all together |
 | `src/test/` | Vitest test suite |
 | `public/` | App icons, web manifest and offline service worker |
+
+### Realistic instructor art
+
+Nova is drawn in SVG by default. To use realistic renders instead, add transparent PNGs of her to `public/nova/`: `happy.png` (required), plus `talk.png`, `think.png` and `concern.png` (optional). They're picked up automatically and swapped by mood.
