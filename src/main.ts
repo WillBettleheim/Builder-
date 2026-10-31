@@ -8,6 +8,7 @@ import { World, partThumbnail, wireColor } from './scene/world';
 import { measure, type MeterMode } from './sim/meter';
 import { liveSchematic, renderSchematic } from './ui/schematic';
 import { pack, unpack } from './ui/codec';
+import { classCsv, dashboardHtml, importReports, inviteLink, loadTeacher, newClassCode, readInvite, reportLink, saveTeacher, type LessonRef, type Report } from './ui/teacher';
 import { WIRE_COLORS, autoWires, endpoint, endpointLabel, nearestGround, newWireId, type Wire } from './sim/circuit';
 import { CodeEditor } from './ui/editor';
 import { runTour } from './ui/tour';
@@ -41,6 +42,8 @@ interface Saved {
   quiz: Record<string, Record<number, { tries: number; ok: boolean }>>;
   stats: { wires: number };
   instructor: boolean;
+  /** the class this learner joined from a teacher's invite link */
+  classroom?: { code: string; name: string; teacher: string; student: string } | null;
 }
 const KEY = 'builder-v1';
 const OLD_KEY = 'arduino-lab-v1'; // name before the app became Builder
@@ -396,6 +399,153 @@ function updateMeter() {
   if (red && black && meterMode === 'volts' && r.display !== '- - -') award('meter');
 }
 world.onProbe = updateMeter;
+
+// ---------- classroom: joining a class, reporting progress, the teacher dashboard ----------
+const lessonRefs = (): LessonRef[] => LESSONS.map(l => ({ id: l.id, title: l.title, level: l.level, goals: l.goals.length }));
+
+function renderClassroom() {
+  const c = saved.classroom;
+  $('classroom-box').innerHTML = c
+    ? `<p class="muted">You’re in <b>${esc(c.name)}</b>${c.teacher ? ` with ${esc(c.teacher)}` : ''} as <b>${esc(c.student)}</b>.</p>
+       <div class="row"><button class="mini primary" data-cls="report">Send progress to teacher</button><button class="mini ghost" data-cls="leave">Leave class</button></div>`
+    : `<p class="muted">Students: open the invite link your teacher shares to join a class.</p>`;
+  $('classroom-box').insertAdjacentHTML('beforeend', `<div class="row" style="margin-top:6px"><button class="mini" data-cls="teacher">Teacher dashboard</button></div>`);
+}
+$('classroom-box').addEventListener('click', e => {
+  const act = (e.target as HTMLElement).closest<HTMLElement>('[data-cls]')?.dataset.cls;
+  $('settings-pop').hidden = true;
+  if (act === 'report') void sendProgress();
+  if (act === 'teacher') void openTeacher();
+  if (act === 'leave' && confirm('Leave this class? You keep all your progress.')) { saved.classroom = null; save(); renderClassroom(); }
+});
+
+function progressReport(): Report {
+  const c = saved.classroom!;
+  const part: Record<string, number> = {};
+  for (const l of LESSONS) {
+    const got = (saved.goals[l.id] ?? []).filter(Boolean).length;
+    if (got && !lessonComplete(l)) part[l.id] = got;
+  }
+  const quiz = Object.values(saved.quiz).flatMap(x => Object.values(x)).filter(x => x.ok && x.tries === 1).length;
+  return { v: 1, c: c.code, n: c.student, t: Date.now(), done: LESSONS.filter(lessonComplete).map(l => l.id), part, badges: Object.keys(saved.badges).length, quiz };
+}
+
+async function sendProgress() {
+  const url = await reportLink(progressReport());
+  let copied = false;
+  try { await navigator.clipboard.writeText(url); copied = true; } catch { /* clipboard blocked: the box below still works */ }
+  $('modal-card').setAttribute('aria-label', 'Send progress');
+  $('modal-card').innerHTML = `<div class="bs-head"><div><div class="eyebrow">CLASSROOM</div><h2>Send your progress</h2></div><button class="mini ghost icon" data-tm="close" aria-label="Close">×</button></div>
+    <div class="bs-body"><p>${copied ? '<b>Link copied!</b> ' : ''}Send this link to ${esc(saved.classroom!.teacher || 'your teacher')}: by email, chat or your class page. It shows the lessons you’ve finished, your badges and quiz score.</p>
+    <input class="tm-link" readonly value="${esc(url)}" aria-label="Progress link">
+    <p class="muted">Send a new link whenever you want your teacher to see your latest progress.</p></div>`;
+  modal.hidden = false;
+  $('modal-card').querySelector<HTMLInputElement>('.tm-link')?.select();
+}
+
+let teacherClass: string | null = null;
+async function openTeacher(code: string | null = teacherClass) {
+  const store = loadTeacher();
+  const cls = store.classes.find(c => c.code === code) ?? store.classes[0];
+  teacherClass = cls?.code ?? null;
+  $('modal-card').setAttribute('aria-label', 'Teacher dashboard');
+  $('modal-card').innerHTML = dashboardHtml(store, teacherClass, lessonRefs(), cls ? await inviteLink(cls) : '');
+  modal.hidden = false;
+}
+
+$('modal-card').addEventListener('click', async e => {
+  const el = (e.target as HTMLElement).closest<HTMLElement>('[data-tm]');
+  const act = el?.dataset.tm;
+  if (!act) return;
+  if (act === 'close') closeModal();
+  if (act === 'copy-invite') {
+    const url = $('modal-card').querySelector<HTMLInputElement>('[data-tm="invite-url"]')!.value;
+    try { await navigator.clipboard.writeText(url); toast('Invite link copied. Share it with your class.', 'good', 3500); } catch { toast('Select the link and copy it instead.', 'hint'); }
+  }
+  if (act === 'remove' && teacherClass) {
+    const store = loadTeacher();
+    delete store.reports[teacherClass]?.[el!.dataset.student!];
+    saveTeacher(store);
+    void openTeacher();
+  }
+  if (act === 'csv' && teacherClass) {
+    const store = loadTeacher();
+    const name = store.classes.find(c => c.code === teacherClass)?.name ?? 'class';
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([classCsv(store, teacherClass, lessonRefs())], { type: 'text/csv' }));
+    a.download = `${name.replace(/[^\w -]+/g, '').trim() || 'class'} progress.csv`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+  if (act === 'delete-class' && teacherClass && confirm('Delete this class and all its reports from this browser?')) {
+    const store = loadTeacher();
+    store.classes = store.classes.filter(c => c.code !== teacherClass);
+    delete store.reports[teacherClass];
+    saveTeacher(store);
+    teacherClass = null;
+    void openTeacher();
+  }
+});
+$('modal-card').addEventListener('change', e => {
+  const sel = e.target as HTMLSelectElement;
+  if (sel.dataset.tm === 'pick') void openTeacher(sel.value);
+});
+$('modal-card').addEventListener('submit', async e => {
+  const form = e.target as HTMLFormElement;
+  const kind = form.dataset.tmForm;
+  if (!kind) return;
+  e.preventDefault();
+  const data = new FormData(form);
+  if (kind === 'create') {
+    const store = loadTeacher();
+    const cls = { code: newClassCode(), name: String(data.get('name')).trim().slice(0, 60), teacher: String(data.get('teacher') ?? '').trim().slice(0, 60), created: Date.now() };
+    if (!cls.name) return;
+    store.classes.push(cls);
+    saveTeacher(store);
+    toast(`Class <b>${esc(cls.name)}</b> created. Share its invite link with your students.`, 'good', 5000);
+    void openTeacher(cls.code);
+  }
+  if (kind === 'import') {
+    const { added, skipped } = await importReports(loadTeacher(), String(data.get('links') ?? ''));
+    toast(added ? `Added ${added} report${added === 1 ? '' : 's'}.${skipped ? ` Skipped ${skipped} (older, broken or for another class).` : ''}` : 'No new reports found in that text. Check the links are for this class.', added ? 'good' : 'hint', 5000);
+    void openTeacher();
+  }
+  if (kind === 'join') {
+    const student = String(data.get('student') ?? '').trim().slice(0, 40);
+    if (!student || !pendingInvite) return;
+    saved.classroom = { ...pendingInvite, student };
+    pendingInvite = null;
+    save();
+    renderClassroom();
+    closeModal();
+    toast(`You joined <b>${esc(saved.classroom.name)}</b>. Send your progress any time from ⚙ Settings.`, 'good', 6000);
+  }
+});
+
+let pendingInvite: { code: string; name: string; teacher: string } | null = null;
+/** #class=… joins a class; #report=… (opened by a teacher) adds a student's report. */
+async function openClassLink() {
+  const m = location.hash.match(/^#(class|report)=([\w-]+)$/);
+  if (!m) return;
+  history.replaceState(null, '', location.pathname + location.search);
+  if (m[1] === 'class') {
+    const invite = await readInvite(m[2]);
+    if (!invite) { toast('That class link is broken or incomplete.', 'error'); return; }
+    pendingInvite = invite;
+    $('modal-card').setAttribute('aria-label', 'Join a class');
+    $('modal-card').innerHTML = `<div class="bs-head"><div><div class="eyebrow">CLASSROOM</div><h2>Join ${esc(invite.name)}</h2></div><button class="mini ghost icon" data-tm="close" aria-label="Close">×</button></div>
+      <div class="bs-body"><p>${invite.teacher ? `${esc(invite.teacher)} invited you` : 'You’ve been invited'} to this class. Your teacher will see the lessons you finish when you send them your progress.</p>
+      <form data-tm-form="join" class="tm-join"><label class="field"><span>Your name</span><input name="student" required maxlength="40" autocomplete="name" placeholder="First name and initial"></label><button class="mini primary">Join class</button></form></div>`;
+    modal.hidden = false;
+    $('modal-card').querySelector<HTMLInputElement>('input[name=student]')?.focus();
+  } else {
+    const store = loadTeacher();
+    const { added } = await importReports(store, `report=${m[2]}`);
+    if (!store.classes.length) toast('This is a student’s progress link. Open it on the computer where you created your class.', 'hint', 8000);
+    else { toast(added ? 'Report added to your class.' : 'That report is older than one you already have, or for another class.', added ? 'good' : 'hint', 5000); void openTeacher(); }
+  }
+}
+renderClassroom();
 
 // ---------- phone app for the Bluetooth module ----------
 const phoneEl = $('phone');
@@ -1740,7 +1890,8 @@ renderProgress();
 document.fonts?.ready.then(() => { if (mode === 'lessons') renderTray(); });
 setMode(mode);
 void openSharedFromUrl();
-window.addEventListener('hashchange', () => void openSharedFromUrl());
+void openClassLink();
+window.addEventListener('hashchange', () => { void openSharedFromUrl(); void openClassLink(); });
 
 if (!saved.toured) setTimeout(startTour, 600);
 

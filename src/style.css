@@ -796,3 +796,40 @@ body.instructor-on .guide { max-height: calc(100% - 40px); }
 .sd-file { margin-top: 4px; }
 .sd-file pre { margin: 4px 0 0; max-height: 110px; overflow: auto; padding: 6px 8px; border-radius: 6px; background: var(--paper); font-size: 11px; }
 @media (max-width: 1000px) { .phone { top: 8px; right: 8px; height: calc(56vh - 70px); width: 200px; } }
+
+/* teacher mode */
+.tm-note { font-size: 12px; margin: 10px 0; }
+.tm-create, .tm-import, .tm-join { margin-top: 12px; }
+.tm-create h3 { margin: 16px 0 8px; font-size: 14px; }
+.tm-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 8px; }
+.tm-bar { display: flex; align-items: flex-end; gap: 14px; margin: 6px 0 10px; }
+.tm-bar .field { flex: 1; margin: 0; }
+.tm-code { display: grid; gap: 2px; padding: 6px 12px; border-radius: 10px; background: var(--paper); border: 1px solid var(--line); }
+.tm-code span { font-size: 10.5px; color: var(--ink-3); }
+.tm-code b { font: 700 16px var(--mono); letter-spacing: 0.12em; }
+.tm-invite { display: flex; align-items: flex-end; gap: 8px; }
+.tm-invite .field { flex: 1; margin: 0; }
+.tm-import textarea, .tm-link { width: 100%; font: 12px var(--mono); }
+.tm-link { padding: 8px; border-radius: 8px; border: 1px solid var(--line-2); background: var(--paper); color: var(--ink); margin: 6px 0; }
+.tm-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 14px 0; }
+.tm-stats div { display: grid; gap: 2px; padding: 10px 12px; border-radius: 10px; background: var(--paper); border: 1px solid var(--line); }
+.tm-stats b { font-size: 18px; }
+.tm-stats span { font-size: 11.5px; color: var(--ink-3); }
+.tm-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.tm-table th { text-align: left; font-size: 11px; color: var(--ink-3); font-weight: 600; padding: 4px 6px; border-bottom: 1px solid var(--line); }
+.tm-table td { padding: 6px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.tm-table small { color: var(--ink-3); margin-left: 6px; }
+.tm-meter { display: inline-block; width: 90px; height: 7px; border-radius: 4px; background: var(--paper); border: 1px solid var(--line); overflow: hidden; vertical-align: middle; }
+.tm-meter i { display: block; height: 100%; background: var(--accent); }
+.tm-heat-wrap { overflow-x: auto; }
+.tm-heat { border-collapse: separate; border-spacing: 2px; font-size: 11px; }
+.tm-heat thead th { font-weight: 600; color: var(--ink-3); text-align: left; padding: 0 2px; border-left: 2px solid var(--line); }
+.tm-heat tbody th { text-align: left; padding-right: 8px; white-space: nowrap; font-weight: 600; }
+.tm-heat td { padding: 0; }
+.tm-heat i, .tm-legend i { display: block; width: 12px; height: 12px; border-radius: 3px; background: var(--paper); border: 1px solid var(--line); }
+.tm-heat i.done, .tm-legend i.done { background: #3fae5a; border-color: transparent; }
+.tm-heat i.part, .tm-legend i.part { background: #e9c43b; border-color: transparent; }
+.tm-legend { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--ink-2); }
+.tm-legend i { display: inline-block; margin-left: 8px; }
+.tm-foot { margin-top: 12px; }
+@media (max-width: 600px) { .tm-fields, .tm-stats { grid-template-columns: 1fr; } .tm-invite, .tm-bar { flex-direction: column; align-items: stretch; } }
