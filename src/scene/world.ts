@@ -8,6 +8,8 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js';
+import { OutlinePass } from 'three/examples/jsm/postprocessing/OutlinePass.js';
+import { buildWorkshop, woodTexture } from './workshop';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { Board, type PinListener } from '../sim/board';
 import { AudioOut, BOARD_TERMINALS, PARTS, type Part } from '../sim/parts';
@@ -58,6 +60,9 @@ export class World {
   private composer: EffectComposer;
   private bloom: UnrealBloomPass;
   private ao: GTAOPass;
+  private outline: OutlinePass;
+  private hoverPart: Part | null = null;
+  private lampLight!: THREE.SpotLight;
   private sun!: THREE.DirectionalLight;
   quality: 'high' | 'balanced' | 'low' = 'high';
   /** coloured light that lit LEDs and lamps spill onto the desk */
@@ -96,6 +101,14 @@ export class World {
     this.ao.updateGtaoMaterial({ radius: 1.4, distanceExponent: 1.4, thickness: 1.5, scale: 1.1, samples: 12 });
     this.ao.blendIntensity = 0.85;
     this.composer.addPass(this.ao);
+    // a soft glowing edge around the part under the pointer and the selected part
+    this.outline = new OutlinePass(new THREE.Vector2(256, 256), this.scene, this.camera);
+    this.outline.edgeStrength = 2.6;
+    this.outline.edgeGlow = 0.4;
+    this.outline.edgeThickness = 1.2;
+    this.outline.visibleEdgeColor.set('#35d6cc');
+    this.outline.hiddenEdgeColor.set('#0f4a46');
+    this.composer.addPass(this.outline);
     this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.6, 0.4, 2.2);
     this.composer.addPass(this.bloom);
     this.composer.addPass(new OutputPass());
@@ -142,6 +155,7 @@ export class World {
     mat.position.set(MAT_X, -0.15, MAT_Z);
     mat.receiveShadow = true;
     this.scene.add(mat);
+    this.lampLight = buildWorkshop(this.scene).lampLight;
     this.setTheme('light');
 
     this.selRing = new THREE.Mesh(new THREE.RingGeometry(1, 1.12, 64), new THREE.MeshBasicMaterial({ color: '#1f9a96', transparent: true, opacity: 0.9 }));
@@ -164,7 +178,7 @@ export class World {
     const el = this.renderer.domElement;
     el.addEventListener('pointerdown', e => this.pointerDown(e));
     el.addEventListener('pointermove', e => this.pointerMove(e));
-    el.addEventListener('pointerleave', () => this.setHover(null));
+    el.addEventListener('pointerleave', () => { this.setHover(null); this.hoverPart = null; });
     window.addEventListener('pointerup', e => this.pointerUp(e));
     el.addEventListener('wheel', e => this.wheel(e), { passive: false });
     const ro = new ResizeObserver(() => this.resize());
@@ -180,6 +194,8 @@ export class World {
     const dpr = window.devicePixelRatio;
     this.renderer.setPixelRatio(q === 'high' ? Math.min(dpr, 2) : q === 'balanced' ? Math.min(dpr, 1.5) : 1);
     this.ao.enabled = q === 'high';
+    this.outline.enabled = q !== 'low';
+    this.lampLight.visible = q !== 'low';
     this.bloom.enabled = q !== 'low';
     const size = q === 'high' ? 2048 : q === 'balanced' ? 1024 : 512;
     if (this.sun.shadow.mapSize.x !== size) {
@@ -195,7 +211,10 @@ export class World {
     const t = THEMES[name];
     this.scene.background = new THREE.Color(t.bg);
     this.scene.fog = new THREE.Fog(t.bg, 110, 200);
-    this.groundMat.color.set(t.desk);
+    this.groundMat.color.set('#ffffff');
+    this.groundMat.map?.dispose();
+    this.groundMat.map = woodTexture(name === 'dark');
+    this.groundMat.needsUpdate = true;
     this.matMat.map?.dispose();
     this.matMat.map = matTexture(t);
     this.matMat.needsUpdate = true;
@@ -660,6 +679,7 @@ export class World {
       this.setHover(ep, e);
       if (ep) { this.renderer.domElement.style.cursor = 'crosshair'; return; }
       const hit = this.pick(e);
+      this.hoverPart = hit?.part ?? null;
       const wire = !hit && this.pickWire(e);
       this.renderer.domElement.style.cursor = wire ? 'pointer' : !hit ? '' : hit.action === 'press' ? 'pointer' : hit.action === 'knob' ? 'ns-resize' : hit.action === 'stick' ? 'move' : 'grab';
       return;
@@ -709,6 +729,12 @@ export class World {
     this.drag = null;
     this.controls.enabled = true;
     if (d.mode === 'press') { d.part.state.pressed = false; d.part.state.key = null; }
+    if (d.mode === 'knob' && !d.moved && PARTS[d.part.type].clickPress) {
+      // a click without dragging pushes the knob's built-in switch
+      const p = d.part;
+      p.state.pressed = true;
+      setTimeout(() => { p.state.pressed = false; }, 220);
+    }
     if (d.mode === 'stick') { d.part.state.sx = 0; d.part.state.sy = 0; d.part.state.pressed = false; }
     if (!d.moved || d.mode !== 'move') this.select(d.part);
     if (d.moved || d.mode === 'press') this.onChange();
@@ -736,7 +762,7 @@ export class World {
     const obstacles = this.parts.filter(p => PARTS[p.type].obstacle && p.group).map(p => p.group!);
     for (const p of this.parts) {
       const powered = !p.state.missing?.length;
-      PARTS[p.type].update?.(p, this.board, { running: this.running && powered, dt, obstacles, audio: this.audio });
+      PARTS[p.type].update?.(p, this.board, { running: this.running && powered, dt, obstacles, audio: this.audio, parts: this.parts });
     }
     const sel = this.selected;
     if (sel?.group) {
@@ -749,6 +775,8 @@ export class World {
     } else this.selRing.visible = false;
     if (this.hoverDot.visible) this.hoverDot.scale.setScalar(1 + Math.sin(performance.now() / 150) * 0.15);
     this.updateSpill();
+    const outlined = [this.selected, this.hoverPart].filter((p): p is Part => !!p?.group).map(p => p.group!);
+    this.outline.selectedObjects = [...new Set(outlined)];
     this.stepGlide(dt);
     this.controls.update();
     this.composer.render();
