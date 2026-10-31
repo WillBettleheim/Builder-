@@ -415,6 +415,10 @@ export class World {
         pulse: l.pulse && ((pin, lv, b) => (on() ? l.pulse!(pin, lv, b) : undefined)),
         dht: l.dht && ((pin, b) => (on() ? l.dht!(pin, b) : undefined)),
         keypad: l.keypad && ((r, c) => (on() ? l.keypad!(r, c) : undefined)),
+        ir: l.ir && (pin => (on() ? l.ir!(pin) : undefined)),
+        btInbox: l.btInbox && (rx => (on() ? l.btInbox!(rx) : undefined)),
+        btSend: l.btSend && ((tx, text) => on() && l.btSend!(tx, text)),
+        sd: l.sd && ((cs, b) => (on() ? l.sd!(cs, b) : undefined)),
       };
       return [gated];
     });

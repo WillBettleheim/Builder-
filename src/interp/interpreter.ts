@@ -41,6 +41,15 @@ export interface Host {
   stepperMove(pins: number[], stepsPerRev: number, delta: number): void;
   keypadKey(rowPins: number[], colPins: number[]): [number, number] | null;
   matrixUpdate(key: string, state: { rows: number[]; intensity: number; shutdown: boolean }): void;
+  /** the next button code an IR receiver on this pin picked up, if any */
+  irDecode(pin: number): { command: number; address: number } | null;
+  /** a SoftwareSerial port talking to a Bluetooth module */
+  btAvailable(rx: number): number;
+  btRead(rx: number): number;
+  btWrite(tx: number, text: string): void;
+  /** the files on an SD card whose CS pin is this one, or null when no card answers */
+  sdCard(cs: number): Record<string, string> | null;
+  digitsUpdate(key: string, state: { segs: number[]; brightness: number; on: boolean }): void;
 }
 
 export interface LcdState { addr: number; cols: number; rows: number; lines: string[]; cx: number; cy: number; backlight: boolean; begun: boolean; display: boolean }
@@ -59,10 +68,19 @@ export const CONSTANTS: Record<string, number> = {
   CHANGE: 1, FALLING: 2, RISING: 3, DHT11: 11, DHT22: 22,
   SSD1306_WHITE: 1, SSD1306_BLACK: 0, SSD1306_INVERSE: 2, WHITE: 1, BLACK: 0, INVERSE: 2, SSD1306_SWITCHCAPVCC: 2, NO_KEY: 0,
   NEO_GRB: 82, NEO_RGB: 6, NEO_GRBW: 210, NEO_KHZ800: 0, NEO_KHZ400: 256,
+  FILE_READ: 0, FILE_WRITE: 1, ENABLE_LED_FEEDBACK: 1, DISABLE_LED_FEEDBACK: 0,
+  SEG_A: 1, SEG_B: 2, SEG_C: 4, SEG_D: 8, SEG_E: 16, SEG_F: 32, SEG_G: 64, SEG_DP: 128,
 };
+
+/** 7-segment patterns for 0–9 and A–F, bit 0 = segment a … bit 6 = segment g. */
+export const SEG_DIGITS = [0x3f, 0x06, 0x5b, 0x4f, 0x66, 0x6d, 0x7d, 0x07, 0x7f, 0x6f, 0x77, 0x7c, 0x39, 0x5e, 0x79, 0x71];
+const SEG_MINUS = 0x40;
+
+/** Where text goes and comes from for print()/read(): the Serial Monitor, a Bluetooth link or a file. */
+interface Stream { name: string; write(text: string): void; available(): number; read(): number }
 const FLOAT_CONSTANTS = new Set(['PI', 'HALF_PI', 'TWO_PI', 'DEG_TO_RAD', 'RAD_TO_DEG']);
 const FLOAT_FUNCS = new Set(['sqrt', 'pow', 'sin', 'cos', 'tan', 'atan', 'atan2', 'asin', 'acos', 'exp', 'log', 'log10', 'floor', 'ceil', 'fabs', 'radians', 'degrees', 'sq']);
-const SIZES: Record<string, number> = { int: 2, uint: 2, long: 4, ulong: 4, float: 4, bool: 1, byte: 1, char: 1, String: 6, Servo: 3, LCD: 4, NeoPixel: 20, DHT: 4, OLED: 8, Stepper: 12, Keypad: 16, Matrix: 12 };
+const SIZES: Record<string, number> = { int: 2, uint: 2, long: 4, ulong: 4, float: 4, bool: 1, byte: 1, char: 1, String: 6, Servo: 3, LCD: 4, NeoPixel: 20, DHT: 4, OLED: 8, Stepper: 12, Keypad: 16, Matrix: 12, SoftSerial: 8, File: 16, Digits: 8 };
 
 const STATEMENT_COST_MS = 0.004; // ~4µs per statement, roughly a 16 MHz AVR
 const STEP_BUDGET = 40000; // max statements per animation frame
@@ -78,6 +96,7 @@ function wrap(v: number, bits: number, signed: boolean): number {
 }
 
 export function coerce(type: string, v: Value): Value {
+  if (type === 'File') return v && typeof v === 'object' ? v : 0; // an open file, or 0 when SD.open() failed
   if (type === 'String') return typeof v === 'string' ? v : String(v);
   if (typeof v === 'string') {
     if (type === 'char' && v.length === 1) return v.charCodeAt(0);
@@ -108,6 +127,8 @@ export class Interpreter {
   private scope: Scope = this.global;
   private steps = 0;
   private servoCount = 0;
+  private ir: { pin: number | null; data: { command: number; address: number } | null } = { pin: null, data: null };
+  private sd: Record<string, string> | null = null;
   private depth = 0;
   currentLine = 0;
   /** when set, pause before every statement (for the Step button) */
@@ -278,7 +299,7 @@ export class Interpreter {
 
   private *declareVar(type: string, d: Node): Gen<void> {
     if (type === 'void') throw new RuntimeError('Variables cannot have type void', d.line);
-    if (['Servo', 'LCD', 'NeoPixel', 'DHT', 'OLED', 'Stepper', 'Keypad', 'Matrix'].includes(type)) {
+    if (['Servo', 'LCD', 'NeoPixel', 'DHT', 'OLED', 'Stepper', 'Keypad', 'Matrix', 'SoftSerial', 'Digits'].includes(type)) {
       if (d.isArray) throw new RuntimeError(`Arrays of ${type} objects are not supported`, d.line);
       // "Keypad k = Keypad(...)" is the same as "Keypad k(...)"
       let ctor: Node[] = d.ctorArgs ?? [];
@@ -346,6 +367,14 @@ export class Interpreter {
       if (args.length < 3) throw new RuntimeError('Create it with its pins: LedControl lc = LedControl(DIN, CLK, CS, 1);', d.line);
       // the MAX7219 starts asleep, just like the real chip
       return { key: `${args[0]},${args[1]},${args[2]}`, rows: Array(8).fill(0), intensity: 8, shutdown: true };
+    }
+    if (type === 'SoftSerial') {
+      if (args.length !== 2) throw new RuntimeError('Create it with its two pins: SoftwareSerial bt(10, 11); // RX, TX', d.line);
+      return { rx: args[0], tx: args[1], begun: false };
+    }
+    if (type === 'Digits') {
+      if (args.length !== 2) throw new RuntimeError('Create it with its two pins: TM1637Display display(CLK, DIO);', d.line);
+      return { key: `${args[0]},${args[1]}`, segs: [0, 0, 0, 0], brightness: 7, on: true };
     }
     if (type === 'Keypad') {
       if (args.length !== 5) throw new RuntimeError('Create it like: Keypad keypad = Keypad(makeKeymap(keys), rowPins, colPins, ROWS, COLS);', d.line);
@@ -481,7 +510,19 @@ export class Interpreter {
         return Array.isArray(val) ? countLeaves(val) * size : size;
       }
       case 'Call': return yield* this.call(n);
-      case 'Member': throw new RuntimeError(`"${n.prop}" must be called like ${n.prop}()`, n.line);
+      case 'Member': {
+        // the one plain field chain the libraries need: IrReceiver.decodedIRData.command
+        const o = n.obj;
+        if (o.k === 'Member' && o.prop === 'decodedIRData' && o.obj.k === 'Ident' && o.obj.name === 'IrReceiver') {
+          const data = this.ir.data ?? { command: 0, address: 0 };
+          if (n.prop === 'command') return data.command;
+          if (n.prop === 'address') return data.address;
+          if (n.prop === 'protocol') return 8; // NEC
+          if (n.prop === 'flags') return 0;
+          throw new RuntimeError(`decodedIRData has command, address, protocol and flags, not "${n.prop}"`, n.line);
+        }
+        throw new RuntimeError(`"${n.prop}" must be called like ${n.prop}()`, n.line);
+      }
     }
     throw new RuntimeError(`Unsupported expression ${n.k}`, n.line);
   }
@@ -593,6 +634,105 @@ export class Interpreter {
     if (type === 'float') return formatFloat(v, digits ?? 2);
     if (type === 'char') return String.fromCharCode(v & 0xff);
     return String(v);
+  }
+
+  /** print(), read() and friends, shared by Serial, SoftwareSerial and SD files. */
+  private streamCall(io: Stream, prop: string, args: Value[], n: Node): Value {
+    switch (prop) {
+      case 'print':
+      case 'println': {
+        let text = '';
+        if (args.length) {
+          const t = this.typeOf(n.args[0]);
+          if (args.length > 1 && typeof args[0] === 'number') {
+            text = t === 'float' ? formatFloat(args[0], args[1]) : (args[0] >>> 0).toString(args[1]).toUpperCase();
+          } else text = this.toText(args[0], t);
+        }
+        io.write(prop === 'println' ? text + '\n' : text);
+        return text.length;
+      }
+      case 'write': io.write(typeof args[0] === 'string' ? args[0] : String.fromCharCode(args[0])); return 1;
+      case 'available': return io.available();
+      case 'read': return io.available() ? io.read() : -1;
+      case 'peek': return io.available() ? io.read() : -1;
+      case 'parseInt':
+      case 'parseFloat':
+      case 'readString':
+      case 'readStringUntil': {
+        let s = '';
+        while (io.available()) {
+          const c = String.fromCharCode(io.read());
+          if (prop === 'readStringUntil' && c === String.fromCharCode(args[0])) break;
+          s += c;
+        }
+        if (prop === 'parseInt') return parseInt(s, 10) || 0;
+        if (prop === 'parseFloat') return parseFloat(s) || 0;
+        return s;
+      }
+    }
+    throw new RuntimeError(`${io.name}.${prop}() is not supported`, n.line);
+  }
+
+  private sdCall(prop: string, args: Value[], n: Node): Value {
+    if (prop === 'begin') {
+      this.sd = this.host.sdCard(args[0] ?? 10);
+      if (!this.sd) this.host.hint('sdnone', `No SD card answered on CS pin ${args[0] ?? 10}. Wire the module’s CS to that pin, MOSI to 11, MISO to 12 and SCK to 13.`);
+      return this.sd ? 1 : 0;
+    }
+    const files = this.sd;
+    if (!files) {
+      this.host.hint('sdbegin', 'Call SD.begin(csPin) in setup() and check that it returns true before using the card.');
+      return 0;
+    }
+    const name = String(args[0] ?? '');
+    switch (prop) {
+      case 'exists': return name in files ? 1 : 0;
+      case 'remove': { const had = name in files; delete files[name]; return had ? 1 : 0; }
+      case 'mkdir': case 'rmdir': return 1;
+      case 'open': {
+        const write = args[1] === 1;
+        if (!write && !(name in files)) return 0; // reading a file that isn't there fails, like the real library
+        if (write) files[name] ??= '';
+        return { name, write, pos: 0, open: true, files };
+      }
+    }
+    throw new RuntimeError(`SD.${prop}() is not supported. Use begin(), open(), exists() and remove()`, n.line);
+  }
+
+  private digitsCall(d: { key: string; segs: number[]; brightness: number; on: boolean }, prop: string, args: Value[], n: Node): Value {
+    const push = () => this.host.digitsUpdate(d.key, { segs: [...d.segs], brightness: d.brightness, on: d.on });
+    // write right-aligned digits into [pos, pos + length), like the TM1637Display library
+    const show = (num: number, dots: number, leadingZero: boolean, length = 4, pos = 0, base = 10) => {
+      if (!Number.isInteger(length) || length < 1 || pos < 0 || pos + length > 4) throw new RuntimeError('The display has 4 digits: length and position must fit inside 0–3', n.line);
+      const neg = base === 10 && num < 0;
+      let v = Math.abs(Math.trunc(num));
+      const out: number[] = [];
+      for (let i = length - 1; i >= 0; i--) {
+        const blank = v === 0 && i < length - 1 && !leadingZero;
+        out[i] = blank ? 0 : SEG_DIGITS[v % base];
+        v = Math.floor(v / base);
+      }
+      if (neg) { const first = out.findIndex(x => x !== 0); out[Math.max(0, first - 1)] = SEG_MINUS; }
+      for (let i = 0; i < length; i++) d.segs[pos + i] = out[i] | ((dots >> (7 - i)) & 1 ? 0x80 : 0);
+      push();
+    };
+    switch (prop) {
+      case 'setBrightness': d.brightness = Math.max(0, Math.min(7, args[0] & 7)); d.on = args.length > 1 ? !!args[1] : true; push(); return;
+      case 'clear': d.segs.fill(0); push(); return;
+      case 'showNumberDec': return show(args[0], 0, !!args[1], args[2] ?? 4, args[3] ?? 0);
+      case 'showNumberDecEx': return show(args[0], args[1] ?? 0, !!args[2], args[3] ?? 4, args[4] ?? 0);
+      case 'showNumberHexEx': return show(args[0], args[1] ?? 0, !!args[2], args[3] ?? 4, args[4] ?? 0, 16);
+      case 'encodeDigit': return SEG_DIGITS[args[0] & 15];
+      case 'setSegments': {
+        const data = args[0];
+        if (!Array.isArray(data)) throw new RuntimeError('setSegments() takes an array of segment patterns, e.g. setSegments(data)', n.line);
+        const length = args[1] ?? Math.min(4, data.length), pos = args[2] ?? 0;
+        for (let i = 0; i < length && pos + i < 4; i++) d.segs[pos + i] = (data[i] ?? 0) & 0xff;
+        push();
+        return;
+      }
+    }
+    throw new RuntimeError(`The 4-digit display has no method "${prop}()"`, n.line);
   }
 
   // ---------- calls ----------
@@ -917,43 +1057,29 @@ export class Interpreter {
     const obj = n.callee.obj;
     const prop: string = n.callee.prop;
     const args = yield* this.evalArgs(n);
-    if (obj.k === 'Ident' && obj.name === 'Serial' && !this.findVar('Serial')) {
+    const global = (name: string) => obj.k === 'Ident' && obj.name === name && !this.findVar(name);
+    if (global('Serial')) {
       const h = this.host;
+      if (prop === 'begin') { h.serialBegin(args[0] ?? 9600); return; }
+      if (prop === 'flush' || prop === 'end') return;
+      return this.streamCall({ name: 'Serial', write: t => h.serialWrite(t), available: () => h.serialAvailable(), read: () => h.serialRead() }, prop, args, n);
+    }
+    if (global('SD')) return this.sdCall(prop, args, n);
+    if (global('IrReceiver')) {
+      const ir = this.ir;
       switch (prop) {
-        case 'begin': h.serialBegin(args[0] ?? 9600); return;
-        case 'print':
-        case 'println': {
-          let text = '';
-          if (args.length) {
-            const t = this.typeOf(n.args[0]);
-            if (args.length > 1 && typeof args[0] === 'number') {
-              text = t === 'float' ? formatFloat(args[0], args[1]) : (args[0] >>> 0).toString(args[1]).toUpperCase();
-            } else text = this.toText(args[0], t);
-          }
-          h.serialWrite(prop === 'println' ? text + '\n' : text);
-          return text.length;
+        case 'begin': ir.pin = args[0]; return;
+        case 'decode': {
+          if (ir.pin == null) { this.host.hint('irbegin', 'Call IrReceiver.begin(pin) in setup() first, with the pin the receiver’s signal leg is wired to.'); return 0; }
+          const got = this.host.irDecode(ir.pin);
+          if (!got) return 0;
+          ir.data = got;
+          return 1;
         }
-        case 'write': h.serialWrite(typeof args[0] === 'string' ? args[0] : String.fromCharCode(args[0])); return 1;
-        case 'available': return h.serialAvailable();
-        case 'read': return h.serialRead();
-        case 'peek': return h.serialAvailable() ? h.serialRead() : -1;
-        case 'parseInt':
-        case 'parseFloat':
-        case 'readString':
-        case 'readStringUntil': {
-          let s = '';
-          while (h.serialAvailable()) {
-            const c = String.fromCharCode(h.serialRead());
-            if (prop === 'readStringUntil' && c === String.fromCharCode(args[0])) break;
-            s += c;
-          }
-          if (prop === 'parseInt') return parseInt(s, 10) || 0;
-          if (prop === 'parseFloat') return parseFloat(s) || 0;
-          return s;
-        }
-        case 'flush': case 'end': return;
+        case 'resume': return;
+        case 'stop': case 'start': return;
       }
-      throw new RuntimeError(`Serial.${prop}() is not supported`, n.line);
+      throw new RuntimeError(`IrReceiver.${prop}() is not supported. Use begin(), decode(), resume() and IrReceiver.decodedIRData.command`, n.line);
     }
     if (obj.k !== 'Ident') throw new RuntimeError('Methods can only be called on named variables', n.line);
     const v = this.lookup(obj.name, n.line);
@@ -1015,6 +1141,38 @@ export class Interpreter {
       }
       throw new RuntimeError(`The LED matrix has no method "${prop}()"`, n.line);
     }
+    if (v.type === 'SoftSerial') {
+      const bt = v.value;
+      if (prop === 'begin') { bt.begun = true; return; }
+      if (prop === 'listen' || prop === 'end') return;
+      if (prop === 'isListening') return 1;
+      if (!bt.begun) this.host.hint('btbegin', `Call ${obj.name}.begin(9600) in setup() before using the Bluetooth link.`);
+      const h = this.host;
+      return this.streamCall({ name: obj.name, write: t => h.btWrite(bt.tx, t), available: () => h.btAvailable(bt.rx), read: () => h.btRead(bt.rx) }, prop, args, n);
+    }
+    if (v.type === 'File') {
+      const f = v.value;
+      if (!f) throw new RuntimeError(`"${obj.name}" isn’t an open file. SD.open() failed: check SD.begin() worked and the file name is right`, n.line);
+      switch (prop) {
+        case 'close': f.open = false; return;
+        case 'size': return (f.files[f.name] ?? '').length;
+        case 'name': return f.name;
+        case 'position': return f.pos;
+        case 'seek': f.pos = Math.max(0, args[0] ?? 0); return 1;
+        case 'flush': return;
+      }
+      if (!f.open) throw new RuntimeError(`"${obj.name}" was already closed. Open it again with SD.open()`, n.line);
+      return this.streamCall({
+        name: obj.name,
+        write: t => {
+          if (!f.write) throw new RuntimeError(`"${obj.name}" was opened for reading. Use SD.open(name, FILE_WRITE) to write to it`, n.line);
+          f.files[f.name] = (f.files[f.name] ?? '') + t;
+        },
+        available: () => Math.max(0, (f.files[f.name] ?? '').length - f.pos),
+        read: () => { const c = (f.files[f.name] ?? '').charCodeAt(f.pos); if (Number.isNaN(c)) return -1; f.pos++; return c; },
+      }, prop, args, n);
+    }
+    if (v.type === 'Digits') return this.digitsCall(v.value, prop, args, n);
     if (v.type === 'Keypad') {
       const k = v.value;
       if (prop !== 'getKey') throw new RuntimeError(`The keypad has no method "${prop}()". Use keypad.getKey()`, n.line);

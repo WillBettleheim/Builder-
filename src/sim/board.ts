@@ -23,6 +23,13 @@ export interface PinListener {
   pulse?(pin: number, level: number, board: Board): number | undefined;
   dht?(pin: number, board: Board): { t: number; h: number } | undefined;
   keypad?(rowPins: number[], colPins: number[]): [number, number] | undefined;
+  /** IR receiver: the next remote button code waiting on this pin */
+  ir?(pin: number): { command: number; address: number } | undefined;
+  /** Bluetooth module: bytes from the phone arrive on the board's RX pin, text to the phone leaves on TX */
+  btInbox?(rx: number): number[] | undefined;
+  btSend?(tx: number, text: string): boolean;
+  /** SD card module: its files, when its CS pin is this one */
+  sd?(cs: number, board: Board): Record<string, string> | undefined;
 }
 
 export interface Transition { t: number; v: number }
@@ -43,6 +50,7 @@ export class Board implements Host {
   oleds = new Map<number, Uint8Array>(); // I2C address -> last display() frame
   matrices = new Map<string, { rows: number[]; intensity: number; shutdown: boolean }>(); // 'din,clk,cs' -> LED matrix
   steppers = new Map<string, { steps: number; perRev: number }>(); // sorted coil pins -> position
+  digits = new Map<string, { segs: number[]; brightness: number; on: boolean }>(); // 'clk,dio' -> 4-digit display
 
   // history used by lesson goals
   transitions = new Map<number, Transition[]>();
@@ -76,6 +84,7 @@ export class Board implements Host {
     this.oleds?.clear();
     this.matrices?.clear();
     this.steppers?.clear();
+    this.digits?.clear();
     this.transitions.clear();
     this.pwmSeen.clear();
     this.toneFreqs.clear();
@@ -185,6 +194,39 @@ export class Board implements Host {
     const cur = this.steppers.get(key) ?? { steps: 0, perRev: _perRev };
     this.steppers.set(key, { steps: cur.steps + delta, perRev: _perRev });
   }
+
+  irDecode(pin: number): { command: number; address: number } | null {
+    for (const l of this.listeners) {
+      const code = l.ir?.(pin);
+      if (code) return code;
+    }
+    return null;
+  }
+
+  private btInbox(rx: number): number[] | null {
+    for (const l of this.listeners) {
+      const box = l.btInbox?.(rx);
+      if (box) return box;
+    }
+    return null;
+  }
+  btAvailable(rx: number) { return this.btInbox(rx)?.length ?? 0; }
+  btRead(rx: number) { return this.btInbox(rx)?.shift() ?? -1; }
+  btWrite(tx: number, text: string) {
+    if (!this.listeners.some(l => l.btSend?.(tx, text))) {
+      this.hint('btnone', `Nothing is listening on pin ${tx}. Wire the Bluetooth module’s RXD to the TX pin you gave SoftwareSerial.`);
+    }
+  }
+
+  sdCard(cs: number): Record<string, string> | null {
+    for (const l of this.listeners) {
+      const files = l.sd?.(cs, this);
+      if (files) return files;
+    }
+    return null;
+  }
+
+  digitsUpdate(key: string, state: { segs: number[]; brightness: number; on: boolean }) { this.digits.set(key, state); }
 
   keypadKey(rowPins: number[], colPins: number[]): [number, number] | null {
     for (const l of this.listeners) {
