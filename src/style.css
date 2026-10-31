@@ -710,3 +710,9 @@ body.instructor-on .guide { max-height: calc(100% - 40px); }
 @media (max-width: 1000px) { .ins-figure.photo-mode { width: 112px; height: 150px; } }
 /* phones: a smaller portrait that sits clear of the scene toolbar */
 @media (max-width: 600px) { .ins-figure.photo-mode { width: 84px; height: 112px; } }
+
+/* phones: the header's right-hand controls wrap onto a second row instead of hiding off-screen */
+@media (max-width: 600px) {
+  .top { flex-wrap: wrap; overflow-x: visible; padding: 8px 10px; gap: 6px; }
+  .progress-wrap { margin-left: auto; }
+}
