@@ -1825,7 +1825,7 @@ void loop() {
         if (!st) return false;
         // judged in real time: sim time jumps ahead during delay()
         if (st.steps !== m.last) { m.last = st.steps; m.since = c.now; return !!m.done; }
-        if (c.now - (m.since ?? 0) > 300) {
+        if (c.now - (m.since ?? 0) > 200) {
           const a = ((Math.round(st.angle) % 360) + 360) % 360;
           for (const target of [90, 180, 270]) if (Math.abs(a - target) <= 3) (m.hit ??= new Set()).add(target);
         }
