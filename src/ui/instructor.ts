@@ -138,7 +138,8 @@ export class Instructor {
     let n = 0;
     this.root.classList.add('talking');
     this.talkTimer = window.setInterval(() => {
-      this.setMood(n % 2 ? 'talk' : mood === 'talk' ? 'happy' : mood);
+      // photos can't lip-sync, so hold the talking shot instead of flickering
+      this.setMood(this.photo || n % 2 ? 'talk' : mood === 'talk' ? 'happy' : mood);
       if (++n > 7) {
         clearInterval(this.talkTimer);
         this.setMood(mood === 'talk' ? 'happy' : mood);
