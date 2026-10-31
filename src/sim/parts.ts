@@ -1147,7 +1147,7 @@ const pir: PartDef = {
     g.userData.pir = { domeMat, ledMat };
     return g;
   },
-  update(part, board, ctx) {
+  update(part, _board, ctx) {
     const now = performance.now();
     if (part.state.pressed) part.state.motionUntil = now + part.props.hold * 1000;
     // moving obstacles nearby count as motion

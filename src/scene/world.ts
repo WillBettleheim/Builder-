@@ -76,7 +76,6 @@ export class World {
   private wiresDirty = true;
   private tip: HTMLDivElement;
   private hoverEp: string | null = null;
-  private lastPointer: PointerEvent | null = null;
 
   constructor(private host: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -665,7 +664,6 @@ export class World {
   }
 
   private pointerMove(e: PointerEvent) {
-    this.lastPointer = e;
     const d = this.drag;
     if (this.wiring) {
       const ep = this.pickTerminal(e);
