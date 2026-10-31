@@ -20,5 +20,6 @@ export const BADGES: Badge[] = [
   { id: 'curious', icon: '🙋', name: 'Curious Mind', how: 'Ask Nova a question' },
   { id: 'sharer', icon: '🔗', name: 'Show & Tell', how: 'Share a project link' },
   { id: 'meter', icon: '🔎', name: 'Meter Reader', how: 'Measure a voltage with the multimeter' },
+  { id: 'schematic', icon: '📐', name: 'Diagram Reader', how: 'Open the schematic view' },
   { id: 'maker', icon: '📋', name: 'Maker', how: 'Open the "Build it for real" sheet' },
 ];

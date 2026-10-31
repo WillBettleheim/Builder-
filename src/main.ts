@@ -6,6 +6,7 @@ import { PWM_PINS, pinName } from './sim/board';
 import { PALETTE, PARTS, newPart, type Part } from './sim/parts';
 import { World, partThumbnail, wireColor } from './scene/world';
 import { measure, type MeterMode } from './sim/meter';
+import { liveSchematic, renderSchematic } from './ui/schematic';
 import { WIRE_COLORS, autoWires, endpoint, endpointLabel, nearestGround, newWireId, type Wire } from './sim/circuit';
 import { CodeEditor } from './ui/editor';
 import { runTour } from './ui/tour';
@@ -340,6 +341,7 @@ world.onFrame = dt => {
   }
   // the meter follows live pin changes, a few times a second like a real one
   if (!meterEl.hidden && performance.now() - meterAt > 120) { meterAt = performance.now(); updateMeter(); }
+  updateSchematic();
   plotter.draw();
   if (plotter.visible && plotter.hasData && running) award('plotter');
   if (running && !paused) timeline.record(world.board, pinTracks());
@@ -392,6 +394,40 @@ function updateMeter() {
   if (red && black && meterMode === 'volts' && r.display !== '- - -') award('meter');
 }
 world.onProbe = updateMeter;
+
+// ---------- schematic ----------
+const schematicEl = $('schematic');
+const schematicBtn = $<HTMLButtonElement>('schematic-btn');
+let schematicKey = '';
+
+function setSchematic(on: boolean) {
+  schematicEl.hidden = !on;
+  schematicBtn.setAttribute('aria-pressed', String(on));
+  schematicKey = '';
+  if (on) { updateSchematic(); award('schematic'); }
+}
+schematicBtn.onclick = () => setSchematic(schematicEl.hidden);
+$('schematic-close').onclick = () => setSchematic(false);
+$('schematic-save').onclick = () => {
+  const blob = new Blob([renderSchematic(world.parts, world.wires, true)], { type: 'image/svg+xml' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `${(mode === 'lessons' ? lesson.title : activeProject().name).replace(/[^\w -]+/g, '').trim() || 'circuit'} schematic.svg`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+};
+
+/** Redraw when the circuit changes (parts, their wiring options, or wires), then colour live pins. */
+function updateSchematic() {
+  if (schematicEl.hidden) return;
+  const key = JSON.stringify([world.parts.map(p => [p.id, p.type, p.props.wiring, p.props.count]), world.wires.map(w => [w.a, w.b])]);
+  const body = $('schematic-body');
+  if (key !== schematicKey) {
+    schematicKey = key;
+    body.innerHTML = renderSchematic(world.parts, world.wires);
+  }
+  liveSchematic(body, world.board, running);
+}
 
 // ---------- goals ----------
 function currentGoals() { return mode === 'lessons' ? lesson.goals : []; }
@@ -1375,6 +1411,7 @@ window.addEventListener('keydown', e => {
   }
   if (e.key === 'Escape') {
     if (world.isWiring) world.cancelWiring();
+    else if (!schematicEl.hidden) setSchematic(false);
     else if (!meterEl.hidden) setMeter(false);
     else world.select(null);
     $('help-pop').hidden = true;
