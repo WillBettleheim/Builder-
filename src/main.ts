@@ -58,6 +58,7 @@ function save() {
     snapshotScene();
     recordHistory();
     try { localStorage.setItem(KEY, JSON.stringify(saved)); } catch { /* storage full or blocked */ }
+    if (mode === 'sandbox') refreshProjectLabel();
   }, 300);
 }
 
@@ -406,6 +407,14 @@ function updateInset() {
 }
 window.addEventListener('resize', updateInset);
 
+const projectLabel = (p: Project) => `${p.scene.parts.length - 1} part${p.scene.parts.length === 2 ? '' : 's'} · ${timeAgo(p.updated)}`;
+
+/** Keep the open project's part count current without re-rendering the panel. */
+function refreshProjectLabel() {
+  const small = guideEl.querySelector('.projects li.on small');
+  if (small) small.textContent = projectLabel(activeProject());
+}
+
 function renderGuide() {
   queueMicrotask(updateInset);
   if (mode === 'sandbox') {
@@ -429,7 +438,7 @@ function renderGuide() {
         <h3>Your projects</h3>
         <ul class="projects">
           ${others.map(p => `<li class="${p.id === cur.id ? 'on' : ''}">
-            <button class="proj-open" data-act="open" data-id="${p.id}"><b>${esc(p.name)}</b><small>${p.scene.parts.length - 1} part${p.scene.parts.length === 2 ? '' : 's'} · ${timeAgo(p.updated)}</small></button>
+            <button class="proj-open" data-act="open" data-id="${p.id}"><b>${esc(p.name)}</b><small>${projectLabel(p)}</small></button>
             <button class="mini ghost icon" data-act="dup" data-id="${p.id}" title="Duplicate" aria-label="Duplicate ${esc(p.name)}">⧉</button>
             <button class="mini ghost icon" data-act="del" data-id="${p.id}" title="Delete" aria-label="Delete ${esc(p.name)}">🗑</button>
           </li>`).join('')}
