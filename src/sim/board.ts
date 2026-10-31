@@ -130,6 +130,7 @@ export class Board implements Host {
     if (!m) throw new RuntimeError('pinMode() mode must be INPUT, OUTPUT or INPUT_PULLUP', line);
     this.pins[pin].mode = m;
     if (m === 'INPUT_PULLUP') this.pins[pin].value = 1;
+    else if (m === 'INPUT') this.pins[pin].value = 0; // INPUT switches the pull-up back off
   }
 
   digitalWrite(pin: number, value: number, line: number) {
