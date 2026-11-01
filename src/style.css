@@ -535,7 +535,7 @@ body { background: radial-gradient(1200px 600px at 20% -10%, color-mix(in srgb, 
 .mini.icon:hover { opacity: 1; background: var(--card); }
 .share-url { display: block; width: 100%; margin-top: 6px; padding: 4px 6px; border-radius: 6px; border: 1px solid currentColor; background: transparent; color: inherit; font: 11px var(--mono); }
 #timeline { flex: 1; width: 100%; min-height: 0; display: block; }
-.side { grid-template-rows: minmax(160px, 1fr) auto minmax(150px, 30%); }
+.side { grid-template-rows: minmax(220px, 1fr) auto minmax(130px, 24%); }
 
 /* ---------- settings ---------- */
 .settings-wrap { position: relative; }
@@ -886,3 +886,11 @@ body.instructor-on .guide { max-height: calc(100% - 40px); }
 #view-btn[aria-expanded='true'] { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
 @media (max-width: 1000px) { .view-pop { top: calc(56vh - 260px); bottom: auto; } }
 #view-labels { grid-template-columns: repeat(3, 1fr); }
+
+/* on desktop the side column is narrow: keep the live board compact so the editor keeps its room */
+@media (min-width: 1001px) {
+  .bv { max-height: 168px; width: auto; max-width: 100%; }
+  .bv-legend { font-size: 10px; gap: 2px 9px; }
+  .board-panel .panel-head { padding-top: 6px; padding-bottom: 6px; }
+  .bv-legend { padding-bottom: 6px; }
+}
