@@ -1942,6 +1942,7 @@ if (import.meta.env.PROD && 'serviceWorker' in navigator) {
 if (import.meta.env.DEV) {
   (window as any).__builder = {
     world, editor, LESSONS, goLesson, run, stop,
+    openFresh: (l: Lesson) => { snapshotScene(); openLesson(l, true); },
     get lesson() { return lesson; },
     goals: () => saved.goals[lesson.id],
     setGoals: (v: boolean[]) => (saved.goals[lesson.id] = v),
