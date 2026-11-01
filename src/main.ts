@@ -7,6 +7,7 @@ import { PALETTE, PARTS, newPart, type Part } from './sim/parts';
 import { World, partThumbnail, wireColor } from './scene/world';
 import { measure, type MeterMode } from './sim/meter';
 import { liveSchematic, renderSchematic } from './ui/schematic';
+import { BoardView } from './ui/boardview';
 import { pack, unpack } from './ui/codec';
 import { classCsv, dashboardHtml, importReports, inviteLink, loadTeacher, newClassCode, readInvite, reportLink, saveTeacher, type LessonRef, type Report } from './ui/teacher';
 import { WIRE_COLORS, autoWires, endpoint, endpointLabel, nearestGround, newWireId, type Wire } from './sim/circuit';
@@ -42,6 +43,10 @@ interface Saved {
   quiz: Record<string, Record<number, { tries: number; ok: boolean }>>;
   stats: { wires: number };
   instructor: boolean;
+  /** camera and overlay options from the View menu */
+  view?: { pinLabels: 'off' | 'used' | 'all'; follow: boolean; wiresOnTop: boolean };
+  /** the live board panel is folded away */
+  boardHidden?: boolean;
   /** grid size parts snap to, in cm (0 = fine 0.25 cm steps) */
   snap?: number;
   /** the class this learner joined from a teacher's invite link */
@@ -350,6 +355,7 @@ world.onFrame = dt => {
   if (!meterEl.hidden && performance.now() - meterAt > 120) { meterAt = performance.now(); updateMeter(); }
   updateSchematic();
   updatePhone();
+  if (performance.now() - boardAt > 100) { boardAt = performance.now(); if (!saved.boardHidden) boardView.update(world.parts, world.board, running); }
   plotter.draw();
   if (plotter.visible && plotter.hasData && running) award('plotter');
   if (running && !paused) timeline.record(world.board, pinTracks());
@@ -625,6 +631,57 @@ function renderPhone() {
     : '<p class="ph-note">Paired with the HC-05. Send a message, or tap a quick button.</p>';
   phoneLog.scrollTop = phoneLog.scrollHeight;
 }
+
+// ---------- live board diagram ----------
+const boardView = new BoardView($('board-view'));
+let boardAt = 0;
+function renderBoardPanel() {
+  const hidden = !!saved.boardHidden;
+  $('board-panel').classList.toggle('collapsed', hidden);
+  const b = $('board-collapse');
+  b.textContent = hidden ? '+' : '–';
+  b.setAttribute('aria-expanded', String(!hidden));
+  b.title = hidden ? 'Show the live board' : 'Hide the live board';
+}
+$('board-collapse').onclick = () => { saved.boardHidden = !saved.boardHidden; save(); renderBoardPanel(); renderView(); };
+renderBoardPanel();
+
+// ---------- view menu ----------
+const viewPop = $('view-pop');
+function renderView() {
+  const v = (saved.view ??= { pinLabels: 'used', follow: false, wiresOnTop: false });
+  world.view.pinLabels = v.pinLabels;
+  world.view.follow = v.follow;
+  if (world.view.wiresOnTop !== v.wiresOnTop) world.setWiresOnTop(v.wiresOnTop);
+  for (const b of viewPop.querySelectorAll<HTMLButtonElement>('[data-labels]')) b.setAttribute('aria-checked', String(b.dataset.labels === v.pinLabels));
+  $<HTMLInputElement>('view-follow').checked = v.follow;
+  $<HTMLInputElement>('view-wires').checked = v.wiresOnTop;
+  $<HTMLInputElement>('view-board').checked = !saved.boardHidden;
+}
+$('view-btn').onclick = e => {
+  e.stopPropagation();
+  viewPop.hidden = !viewPop.hidden;
+  $('view-btn').setAttribute('aria-expanded', String(!viewPop.hidden));
+};
+viewPop.addEventListener('click', e => {
+  const t = e.target as HTMLElement;
+  const cam = t.closest<HTMLElement>('[data-cam]')?.dataset.cam;
+  if (cam) world.setView(cam as 'angled' | 'top' | 'front' | 'side');
+  const labels = t.closest<HTMLElement>('[data-labels]')?.dataset.labels;
+  if (labels) { saved.view!.pinLabels = labels as 'off' | 'used' | 'all'; save(); renderView(); }
+});
+viewPop.addEventListener('change', e => {
+  const t = e.target as HTMLInputElement;
+  if (t.id === 'view-follow') saved.view!.follow = t.checked;
+  if (t.id === 'view-wires') saved.view!.wiresOnTop = t.checked;
+  if (t.id === 'view-board') { saved.boardHidden = !t.checked; renderBoardPanel(); }
+  save();
+  renderView();
+});
+document.addEventListener('click', e => {
+  if (!viewPop.hidden && !(e.target as HTMLElement).closest('#view-pop, #view-btn')) { viewPop.hidden = true; $('view-btn').setAttribute('aria-expanded', 'false'); }
+});
+renderView();
 
 // ---------- schematic ----------
 const schematicEl = $('schematic');
@@ -1635,6 +1692,7 @@ window.addEventListener('keydown', e => {
   }
   if (e.key === 'Escape') {
     if (world.isWiring) world.cancelWiring();
+    else if (!viewPop.hidden) viewPop.hidden = true;
     else if (!schematicEl.hidden) setSchematic(false);
     else if (!phoneEl.hidden) setPhone(false);
     else if (!meterEl.hidden) setMeter(false);
