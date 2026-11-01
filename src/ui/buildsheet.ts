@@ -38,6 +38,13 @@ const SHOPPING: Record<string, { item: string; extras?: string[] }> = {
   bluetooth: { item: 'HC-05 Bluetooth module', extras: ['1 kΩ resistor', '2 kΩ resistor (divider for its 3.3 V RXD pin)'] },
   digits: { item: 'TM1637 4-digit 7-segment display module' },
   sdcard: { item: 'Micro SD card module (SPI) + micro SD card' },
+  robot: { item: '2WD robot car chassis kit with 2 gear motors and wheels', extras: ['L298N motor driver module', '4×AA battery holder'] },
+  linesensor: { item: '2-channel TCRT5000 IR line tracking sensor module' },
+  arm: { item: '4-DOF desktop robot arm kit with 4 SG90 servos', extras: ['Separate 5 V 2 A power supply for the servos'] },
+  track: { item: 'Line-following track (or black electrical tape on white card)' },
+  wall: { item: 'Building blocks or cardboard for walls' },
+  cube: { item: 'Small foam or wooden cube (2 cm)' },
+  pad: { item: 'Paper target square' },
 };
 
 const COLOR_NAMES: Record<string, string> = {

@@ -2454,12 +2454,348 @@ const sdcard: PartDef = {
   },
 };
 
+// ---------- robotics: a 2-wheel robot car, line tracks, walls and a robot arm ----------
+const ROBOT = { track: 13.6, wheelR: 3.2, vmax: 22, deckY: 3.6 };
+
+const robotCar: PartDef = {
+  type: 'robot',
+  name: 'Robot Car',
+  blurb: 'A 2-wheel robot with an L298N motor driver. IN1/IN2 set the left wheel’s direction and IN3/IN4 the right’s (HIGH + LOW = forward). ENA/ENB take analogWrite() for speed; leave them unwired for full speed. Drop the board and sensors onto its deck: they ride along.',
+  terminals: () => ['ena', 'in1', 'in2', 'in3', 'in4', 'enb'].map((k, i) => ({
+    key: k, label: k.toUpperCase() + (k === 'ena' ? ' (left speed)' : k === 'enb' ? ' (right speed)' : ''), kind: 'signal' as const, pwm: k.startsWith('en'),
+    pos: [row(8, i, 0.5), ROBOT.deckY + 0.55, 7.2] as [number, number, number],
+  })).concat([
+    { key: 'vcc', label: 'VCC', kind: '5V' as any, pwm: false, pos: [row(8, 6, 0.5), ROBOT.deckY + 0.55, 7.2] },
+    { key: 'gnd', label: 'GND', kind: 'GND' as any, pwm: false, pos: [row(8, 7, 0.5), ROBOT.deckY + 0.55, 7.2] },
+  ]),
+  deck: { minX: -5.6, maxX: 5.6, minZ: -8.6, maxZ: 4.6, y: ROBOT.deckY },
+  build() {
+    const g = new THREE.Group();
+    const acrylic = new THREE.MeshPhysicalMaterial({ color: '#f2b705', roughness: 0.35, transmission: 0.15, thickness: 0.3, clearcoat: 0.6 });
+    g.add(at(box(12, 0.3, 18.5, acrylic, 0.6), 0, ROBOT.deckY - 0.15, 0));
+    // gear motors and wheels on each side
+    const wheels: THREE.Group[] = [];
+    for (const side of [-1, 1]) {
+      g.add(at(box(2.2, 1.9, 6.4, mat('#f0c419'), 0.2), side * 4.6, ROBOT.wheelR, 0));
+      const w = new THREE.Group();
+      w.position.set(side * (ROBOT.track / 2), ROBOT.wheelR, 0);
+      const tire = cyl(ROBOT.wheelR, ROBOT.wheelR, 1.3, mat('#1b1c1f', { roughness: 0.9 }), 32);
+      tire.rotation.z = Math.PI / 2;
+      const hub = cyl(1.4, 1.4, 1.36, mat('#f0c419'), 24);
+      hub.rotation.z = Math.PI / 2;
+      w.add(tire, hub);
+      // spokes, so you can see the wheel turn
+      for (let i = 0; i < 3; i++) { const sp = at(box(1.38, 0.35, 2.6, mat('#d9a90f'), 0.05), 0, 0, 0); sp.rotation.x = (i * Math.PI) / 3; w.add(sp); }
+      g.add(w);
+      wheels.push(w);
+    }
+    // caster ball at the front
+    g.add(at(cyl(0.8, 0.6, 2.4, M.metal, 16), 0, 2.1, -7.4));
+    g.add(at(new THREE.Mesh(new THREE.SphereGeometry(0.9, 18, 12), M.metal), 0, 0.9, -7.4));
+    // battery pack and the motor driver at the back
+    g.add(at(box(7.4, 1.6, 2.2, mat('#1d1e22'), 0.12), 0, ROBOT.deckY + 0.8, 5.6));
+    for (let i = 0; i < 4; i++) g.add(at(cyl(0.5, 0.5, 1.7, mat('#c9693f'), 16), -2.6 + i * 1.75, ROBOT.deckY + 1.75, 5.6).rotateZ(Math.PI / 2));
+    g.add(at(box(4.6, 0.12, 2.0, mat('#c4262d'), 0.04), 0, ROBOT.deckY + 0.35, 7.6));
+    g.add(at(box(1.4, 0.9, 1.0, M.black, 0.05), -1.0, ROBOT.deckY + 0.85, 7.9)); // heatsink
+    for (let i = 0; i < 8; i++) g.add(at(cyl(0.04, 0.04, 0.35, M.gold, 6), row(8, i, 0.5), ROBOT.deckY + 0.55, 7.2));
+    g.userData.robot = { wheels };
+    return g;
+  },
+  drive(part, board) {
+    const lvl = (k: string) => (part.pins[k] == null ? 0 : board.level(part.pins[k]));
+    // an unwired ENA/ENB has its jumper cap on: full speed
+    const en = (k: string) => (part.pins[k] == null ? 1 : lvl(k));
+    const dir = (a: string, b: string) => Number(lvl(a) > 0.5) - Number(lvl(b) > 0.5);
+    return { left: dir('in1', 'in2') * en('ena') * ROBOT.vmax, right: dir('in3', 'in4') * en('enb') * ROBOT.vmax, track: ROBOT.track };
+  },
+  update(part, _board, ctx) {
+    const st = part.state;
+    const [l, r] = part.group!.userData.robot.wheels;
+    l.rotation.x -= ((st.vl ?? 0) / ROBOT.wheelR) * ctx.dt;
+    r.rotation.x -= ((st.vr ?? 0) / ROBOT.wheelR) * ctx.dt;
+    const speed = Math.abs(st.vl ?? 0) + Math.abs(st.vr ?? 0);
+    ctx.audio.set(part.id, ctx.running && speed > 0.5 ? 70 + speed * 2.2 : null); // gear-motor whine
+  },
+  readout: part => {
+    const st = part.state;
+    if (st.bumpUntil > performance.now()) return '<span class="warn-inline">Bump! The robot hit something</span>';
+    const v = ((st.vl ?? 0) + (st.vr ?? 0)) / 2;
+    return Math.abs(st.vl ?? 0) + Math.abs(st.vr ?? 0) < 0.5 ? 'Stopped' : `Speed <b>${v.toFixed(0)} cm/s</b> · left wheel ${(st.vl ?? 0).toFixed(0)}, right ${(st.vr ?? 0).toFixed(0)}`;
+  },
+};
+
+/** The black line on the track mat: a stadium (two straights joined by half circles). */
+export const TRACK = { straight: 28, radius: 11, line: 2.2, w: 62, d: 42 };
+export function onTrackLine(lx: number, lz: number): boolean {
+  const dx = Math.max(Math.abs(lx) - TRACK.straight / 2, 0);
+  return Math.abs(Math.hypot(dx, lz) - TRACK.radius) < TRACK.line / 2;
+}
+
+const trackMat: PartDef = {
+  type: 'track',
+  name: 'Line Track',
+  blurb: 'A printed mat with a black loop for line-following robots. Parts can sit on top of it.',
+  noPins: true,
+  flat: true,
+  terminals: () => [],
+  build() {
+    const g = new THREE.Group();
+    const PX = 12;
+    const c = document.createElement('canvas');
+    c.width = TRACK.w * PX;
+    c.height = TRACK.d * PX;
+    const ctx = c.getContext('2d')!;
+    ctx.fillStyle = '#f4f2ec';
+    ctx.fillRect(0, 0, c.width, c.height);
+    ctx.strokeStyle = '#d9d5ca';
+    ctx.lineWidth = 4;
+    ctx.strokeRect(6, 6, c.width - 12, c.height - 12);
+    ctx.strokeStyle = '#141416';
+    ctx.lineWidth = TRACK.line * PX;
+    ctx.beginPath();
+    const cx = c.width / 2, cz = c.height / 2, hs = (TRACK.straight / 2) * PX, rr = TRACK.radius * PX;
+    ctx.moveTo(cx - hs, cz - rr);
+    ctx.lineTo(cx + hs, cz - rr);
+    ctx.arc(cx + hs, cz, rr, -Math.PI / 2, Math.PI / 2);
+    ctx.lineTo(cx - hs, cz + rr);
+    ctx.arc(cx - hs, cz, rr, Math.PI / 2, (3 * Math.PI) / 2);
+    ctx.stroke();
+    ctx.fillStyle = '#e2533b';
+    ctx.fillRect(cx - 2, cz + rr - TRACK.line * PX, 4, TRACK.line * PX * 2); // start line
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 8;
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(TRACK.w, TRACK.d), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.85 }));
+    m.rotation.x = -Math.PI / 2;
+    m.position.y = 0.04;
+    m.receiveShadow = true;
+    g.add(m);
+    return g;
+  },
+};
+
+const lineSensor: PartDef = {
+  type: 'linesensor',
+  name: 'Line Sensor (2 eyes)',
+  blurb: 'Two infrared eyes that look down. Each output reads HIGH over a black line and LOW over the white mat. Mount it at the front of a robot car.',
+  terminals: () => [
+    { key: 'vcc', label: 'VCC', kind: '5V', pos: [row(4, 0, 0.42), 0.62, 0.65] },
+    { key: 'gnd', label: 'GND', kind: 'GND', pos: [row(4, 1, 0.42), 0.62, 0.65] },
+    { key: 'l', label: 'Left eye', kind: 'signal', pos: [row(4, 2, 0.42), 0.62, 0.65] },
+    { key: 'r', label: 'Right eye', kind: 'signal', pos: [row(4, 3, 0.42), 0.62, 0.65] },
+  ],
+  build() {
+    const g = new THREE.Group();
+    g.add(at(box(3.4, 0.12, 2.0, mat('#1b1c20'), 0.04), 0, 0.5, 0));
+    for (const x of [-1.2, 1.2]) for (const z of [-0.75, 0.75]) g.add(at(cyl(0.06, 0.06, 0.5, M.dark, 6), x, 0.25, z));
+    for (let i = 0; i < 4; i++) g.add(at(cyl(0.035, 0.035, 0.3, M.gold, 6), row(4, i, 0.42), 0.66, 0.65));
+    const eyes: ReturnType<typeof makeLed>[] = [];
+    for (const x of [-0.7, 0.7]) {
+      g.add(at(box(0.6, 0.35, 0.5, mat('#2a2c33'), 0.04), x, 0.35, -0.6));
+      g.add(at(cyl(0.16, 0.16, 0.3, mat('#5aa7ff', { roughness: 0.2 }), 12), x - 0.13, 0.22, -0.6));
+      g.add(at(cyl(0.16, 0.16, 0.3, M.black, 12), x + 0.13, 0.22, -0.6));
+      const led = makeLed('#ff3b30');
+      led.group.scale.setScalar(0.35);
+      led.group.position.set(x, 0.56, -0.05);
+      g.add(led.group);
+      eyes.push(led);
+    }
+    g.userData.eyes = eyes;
+    return g;
+  },
+  update(part, _board, ctx) {
+    // look straight down from each eye and ask any track mat underneath whether that spot is black
+    const g = part.group!;
+    const tracks = ctx.parts.filter(p => p.type === 'track' && p.group);
+    const seen = [-0.7, 0.7].map(x => {
+      const w = g.localToWorld(new THREE.Vector3(x, 0, -0.6));
+      return tracks.some(t => { const l = t.group!.worldToLocal(w.clone()); return onTrackLine(l.x, l.z); });
+    });
+    part.state.eyes = seen;
+    g.userData.eyes.forEach((led: any, i: number) => setLed(led, ctx.running && seen[i] ? 0.9 : 0));
+  },
+  listener(part) {
+    return {
+      readDigital(pin) {
+        if (pin === part.pins.l) return part.state.eyes?.[0] ? 1 : 0;
+        if (pin === part.pins.r) return part.state.eyes?.[1] ? 1 : 0;
+        return undefined;
+      },
+    };
+  },
+  readout: part => `Left eye: <b>${part.state.eyes?.[0] ? 'line' : 'white'}</b> · Right eye: <b>${part.state.eyes?.[1] ? 'line' : 'white'}</b>`,
+};
+
+const wall: PartDef = {
+  type: 'wall',
+  name: 'Wall Block',
+  blurb: 'A building block for mazes and obstacle courses. Snaps to the grid; robots bump into it and distance sensors see it.',
+  noPins: true,
+  obstacle: true,
+  defaults: { len: '10', color: '#8e9aaf' },
+  props: [
+    { key: 'len', label: 'Length', type: 'select', options: [{ value: '5', label: '5 cm' }, { value: '10', label: '10 cm' }, { value: '20', label: '20 cm' }] },
+    { key: 'color', label: 'Color', type: 'select', options: [{ value: '#8e9aaf', label: 'Grey' }, { value: '#e2533b', label: 'Red' }, { value: '#3b82c4', label: 'Blue' }, { value: '#f2b705', label: 'Yellow' }, { value: '#3fae5a', label: 'Green' }] },
+  ],
+  terminals: () => [],
+  build(part) {
+    const g = new THREE.Group();
+    const len = Number(part.props.len) || 10;
+    const m = mat(part.props.color ?? '#8e9aaf', { roughness: 0.6 });
+    // tall enough that a sensor riding on a robot's deck still sees it
+    g.add(at(box(len, 8, 1.6, m, 0.25), 0, 4, 0));
+    // studs on top, like a building brick
+    for (let x = -len / 2 + 1.25; x < len / 2; x += 2.5) g.add(at(cyl(0.45, 0.45, 0.3, m, 16), x, 8.15, 0));
+    return g;
+  },
+};
+
+// ---------- robot arm ----------
+export const ARM = { base: 4, upper: 8, fore: 8.5 };
+/** Where the arm's claw tip is, in the arm's own frame, for servo angles in degrees. */
+export function armTip(baseDeg: number, shoulderDeg: number, elbowDeg: number): { x: number; y: number; z: number } {
+  const t1 = ((90 - shoulderDeg) * Math.PI) / 180, t2 = ((90 - elbowDeg) * Math.PI) / 180;
+  const reach = ARM.upper * Math.sin(t1) + ARM.fore * Math.sin(t1 + t2);
+  const y = ARM.base + ARM.upper * Math.cos(t1) + ARM.fore * Math.cos(t1 + t2);
+  const yaw = ((baseDeg - 90) * Math.PI) / 180;
+  return { x: reach * Math.sin(yaw), y, z: reach * Math.cos(yaw) };
+}
+
+const robotArm: PartDef = {
+  type: 'arm',
+  name: 'Robot Arm (4 servos)',
+  blurb: 'A desktop arm with four servos: base (turn), shoulder, elbow and claw. Drive each with the Servo library. Claw below 40° grips, above 70° opens. Pick up cubes and place them on the pad.',
+  terminals: () => [
+    ...['base', 'shoulder', 'elbow', 'claw'].map((k, i) => ({ key: k, label: `${k[0].toUpperCase()}${k.slice(1)} servo`, kind: 'signal' as const, pwm: true, pos: [row(6, i, 0.45), 0.62, -2.9] as [number, number, number] })),
+    { key: 'vcc', label: 'VCC', kind: '5V', pos: [row(6, 4, 0.45), 0.62, -2.9] },
+    { key: 'gnd', label: 'GND', kind: 'GND', pos: [row(6, 5, 0.45), 0.62, -2.9] },
+  ],
+  build() {
+    const g = new THREE.Group();
+    const blue = mat('#2a5bd7', { roughness: 0.45 });
+    const white = mat('#eef0f3', { roughness: 0.4 });
+    g.add(at(box(6.4, 0.12, 6.4, mat('#1d4fa0'), 0.05), 0, 0.5, -0.2));
+    for (let i = 0; i < 6; i++) g.add(at(cyl(0.035, 0.035, 0.3, M.gold, 6), row(6, i, 0.45), 0.66, -2.9));
+    g.add(at(cyl(2.6, 2.9, 1.4, white, 40), 0, 1.25, 0.3));
+    const yaw = new THREE.Group();
+    yaw.position.set(0, 1.95, 0.3);
+    yaw.add(at(cyl(2.2, 2.2, 0.5, blue, 40), 0, 0.25, 0));
+    for (const x of [-1.1, 1.1]) yaw.add(at(box(0.4, 2.6, 1.6, white, 0.08), x, 1.5, 0));
+    const shoulder = new THREE.Group();
+    shoulder.position.set(0, ARM.base - 1.95, 0);
+    shoulder.add(at(box(1.6, ARM.upper, 1.0, blue, 0.2), 0, ARM.upper / 2, 0));
+    const elbow = new THREE.Group();
+    elbow.position.set(0, ARM.upper, 0);
+    elbow.add(at(cyl(0.8, 0.8, 1.9, white, 20).rotateZ(Math.PI / 2), 0, 0, 0));
+    elbow.add(at(box(1.3, ARM.fore - 1.6, 0.9, blue, 0.2), 0, (ARM.fore - 1.6) / 2, 0));
+    const claw = new THREE.Group();
+    claw.position.set(0, ARM.fore - 1.6, 0);
+    claw.add(at(box(2.2, 0.5, 1.0, white, 0.08), 0, 0.2, 0));
+    const fingers: THREE.Mesh[] = [];
+    for (const side of [-1, 1]) {
+      const f = at(box(0.35, 1.5, 0.8, mat('#2f3238'), 0.06), side * 0.8, 1.15, 0);
+      claw.add(f);
+      fingers.push(f);
+    }
+    const tip = new THREE.Object3D();
+    tip.position.set(0, 1.6, 0);
+    claw.add(tip);
+    elbow.add(claw);
+    shoulder.add(elbow);
+    yaw.add(shoulder);
+    g.add(yaw);
+    g.userData.arm = { yaw, shoulder, elbow, fingers, tip };
+    return g;
+  },
+  update(part, board, ctx) {
+    const u = part.group!.userData.arm;
+    const st = part.state;
+    // servos glide towards their commanded angles at about 300°/s, like real SG90s
+    const want = (k: string) => (ctx.running && part.pins[k] != null ? board.servoAngles.get(part.pins[k]!) ?? 90 : st[k] ?? 90);
+    for (const k of ['base', 'shoulder', 'elbow', 'claw']) {
+      const cur = st[k] ?? 90, target = want(k);
+      st[k] = cur + Math.max(-300 * ctx.dt, Math.min(300 * ctx.dt, target - cur));
+    }
+    u.yaw.rotation.y = ((st.base - 90) * Math.PI) / 180;
+    u.shoulder.rotation.x = ((90 - st.shoulder) * Math.PI) / 180;
+    u.elbow.rotation.x = ((90 - st.elbow) * Math.PI) / 180;
+    const open = Math.max(0, Math.min(1, (st.claw - 30) / 60));
+    u.fingers.forEach((f: THREE.Mesh, i: number) => { f.position.x = (i ? 1 : -1) * (0.3 + open * 0.75); });
+    // grab a cube when the claw closes around it; let go when it opens
+    const closed = st.claw < 40;
+    const tip: THREE.Vector3 = u.tip.getWorldPosition(new THREE.Vector3());
+    if (closed && !st.wasClosed && !st.holding) {
+      const cube = ctx.parts.find(p => p.type === 'cube' && !p.state.heldBy && p.group && tip.distanceTo(p.group.position.clone().setY(p.group.position.y + 1)) < 1.8);
+      if (cube) { cube.state.heldBy = part.id; st.holding = cube.id; ctx.audio.click(); }
+    }
+    if (!closed && st.holding) {
+      const cube = ctx.parts.find(p => p.id === st.holding);
+      if (cube) delete cube.state.heldBy;
+      st.holding = null;
+    }
+    st.wasClosed = closed;
+    const held = st.holding && ctx.parts.find(p => p.id === st.holding);
+    if (held?.group) {
+      held.x = tip.x;
+      held.z = tip.z;
+      held.group.position.set(tip.x, Math.max(0, tip.y - 1), tip.z);
+      held.group.updateMatrixWorld(true);
+    }
+  },
+  readout: part => {
+    const st = part.state, f = (k: string) => Math.round(st[k] ?? 90);
+    return `Base <b>${f('base')}°</b> · Shoulder <b>${f('shoulder')}°</b> · Elbow <b>${f('elbow')}°</b> · Claw <b>${f('claw')}°</b>${st.holding ? ' · <b>holding a cube</b>' : ''}`;
+  },
+};
+
+const cube: PartDef = {
+  type: 'cube',
+  name: 'Cube',
+  blurb: 'A small block for the robot arm to pick up and move.',
+  noPins: true,
+  defaults: { color: '#e2533b' },
+  props: [{ key: 'color', label: 'Color', type: 'select', options: [{ value: '#e2533b', label: 'Red' }, { value: '#3b82c4', label: 'Blue' }, { value: '#3fae5a', label: 'Green' }, { value: '#f2b705', label: 'Yellow' }] }],
+  terminals: () => [],
+  build(part) {
+    const g = new THREE.Group();
+    g.add(at(box(2, 2, 2, mat(part.props.color ?? '#e2533b', { roughness: 0.5 }), 0.2), 0, 1, 0));
+    return g;
+  },
+  update(part, _board, ctx) {
+    // a dropped cube falls back to the desk
+    const g = part.group!;
+    if (!part.state.heldBy && g.position.y > 0) g.position.y = Math.max(0, g.position.y - 40 * ctx.dt);
+  },
+};
+
+const pad: PartDef = {
+  type: 'pad',
+  name: 'Target Pad',
+  blurb: 'A marked square to drop cubes on.',
+  noPins: true,
+  flat: true,
+  terminals: () => [],
+  build() {
+    const g = new THREE.Group();
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(6, 6), new THREE.MeshStandardMaterial({ map: textTexture([{ text: 'DROP', x: 128, y: 112, size: 46, color: '#1f9e95', weight: '700' }, { text: 'HERE', x: 128, y: 160, size: 46, color: '#1f9e95', weight: '700' }], 256, 256, '#dff3f1'), roughness: 0.8 }));
+    m.rotation.x = -Math.PI / 2;
+    m.position.y = 0.05;
+    g.add(m);
+    const ring = new THREE.Mesh(new THREE.RingGeometry(2.7, 3.0, 4, 1, Math.PI / 4), new THREE.MeshBasicMaterial({ color: '#1f9e95' }));
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.06;
+    ring.scale.setScalar(1.41);
+    g.add(ring);
+    return g;
+  },
+};
+
 export const PARTS: Record<string, PartDef> = Object.fromEntries(
-  [uno, led, rgbLed, button, pot, ldr, tmp36, buzzer, ultrasonic, servo, motor, trafficLight, car, lcd, sevenSeg, pir, joystick, neopixel, bigBreadboard, relay, dht11, oled, stepper, keypad, soil, encoder, matrix, hall, magnet, sound, gas, irRemote, bluetooth, digits, sdcard].map(d => [d.type, d]),
+  [uno, led, rgbLed, button, pot, ldr, tmp36, buzzer, ultrasonic, servo, motor, trafficLight, car, lcd, sevenSeg, pir, joystick, neopixel, bigBreadboard, relay, dht11, oled, stepper, keypad, soil, encoder, matrix, hall, magnet, sound, gas, irRemote, bluetooth, digits, sdcard, robotCar, trackMat, lineSensor, wall, robotArm, cube, pad].map(d => [d.type, d]),
 );
 
 /** Parts shown in the sandbox palette, in order. */
-export const PALETTE = ['breadboard', 'led', 'rgb', 'button', 'keypad', 'pot', 'encoder', 'joystick', 'ldr', 'temp', 'dht', 'soil', 'gas', 'sound', 'hall', 'pir', 'buzzer', 'ultrasonic', 'servo', 'stepper', 'motor', 'relay', 'traffic', 'seg7', 'digits', 'lcd', 'oled', 'matrix', 'neopixel', 'ir', 'bluetooth', 'sdcard', 'magnet', 'car'];
+export const PALETTE = ['breadboard', 'led', 'rgb', 'button', 'keypad', 'pot', 'encoder', 'joystick', 'ldr', 'temp', 'dht', 'soil', 'gas', 'sound', 'hall', 'pir', 'buzzer', 'ultrasonic', 'servo', 'stepper', 'motor', 'relay', 'traffic', 'seg7', 'digits', 'lcd', 'oled', 'matrix', 'neopixel', 'ir', 'bluetooth', 'sdcard', 'robot', 'linesensor', 'arm', 'cube', 'track', 'pad', 'wall', 'magnet', 'car'];
 
 let idCounter = 0;
 export function newPart(type: string, init: Partial<Part> = {}): Part {

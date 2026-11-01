@@ -329,7 +329,6 @@ world.onFrame = dt => {
     world.timeScale = paused ? 0 : speed;
     b.target = Math.min(b.target, b.time) + dt * 1000 * speed;
     interp.resetBudget();
-    world.timeScale = paused ? 0 : speed;
     if (paused) b.target = b.time; // frozen in time until resumed
     try {
       if (!paused && b.time < b.target) gen.next();
@@ -550,6 +549,21 @@ async function openClassLink() {
   }
 }
 renderClassroom();
+
+// ---------- snap grid ----------
+function renderSnap() {
+  const step = saved.snap ?? 0.5;
+  world.setSnap(step);
+  for (const b of document.querySelectorAll<HTMLButtonElement>('#snap [data-snap]')) b.setAttribute('aria-checked', String(Number(b.dataset.snap) === step));
+}
+$('snap').addEventListener('click', e => {
+  const b = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-snap]');
+  if (!b) return;
+  saved.snap = Number(b.dataset.snap);
+  save();
+  renderSnap();
+});
+renderSnap();
 
 // ---------- phone app for the Bluetooth module ----------
 const phoneEl = $('phone');
@@ -1373,6 +1387,7 @@ const PART_CATEGORIES: Record<string, string[]> = {
   Displays: ['seg7', 'digits', 'lcd', 'oled', 'matrix'],
   Motion: ['servo', 'stepper', 'motor', 'relay', 'buzzer'],
   Connect: ['bluetooth', 'sdcard'],
+  Robotics: ['robot', 'linesensor', 'arm', 'cube', 'track', 'pad', 'wall'],
   Other: ['breadboard', 'magnet', 'car'],
 };
 const partFilter = { text: '', cat: 'All' };
