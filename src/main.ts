@@ -326,6 +326,7 @@ world.onFrame = dt => {
     const speed = parseFloat(speedSel.value);
     b.target = Math.min(b.target, b.time) + dt * 1000 * speed;
     interp.resetBudget();
+    world.timeScale = paused ? 0 : speed;
     if (paused) b.target = b.time; // frozen in time until resumed
     try {
       if (!paused && b.time < b.target) gen.next();

@@ -69,6 +69,12 @@ export interface PartDef {
   nets?(part: Part): string[][];
   /** short live status line for the inspector */
   readout?(part: Part): string;
+  /** a platform other parts can be mounted on (they ride along when it moves): local area and height */
+  deck?: { minX: number; maxX: number; minZ: number; maxZ: number; y: number };
+  /** lies flat on the desk, so other parts may sit on top of it (a track mat, a target pad) */
+  flat?: boolean;
+  /** a robot base: how fast its left and right wheels turn right now, in cm/s (the world moves it) */
+  drive?(part: Part, board: Board): { left: number; right: number; track: number };
 }
 
 // ---------- shared materials & helpers ----------

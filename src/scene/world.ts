@@ -48,6 +48,13 @@ export class World {
   onWiresChanged: (newIssues: Issue[]) => void = () => {};
   onFrame: (dt: number) => void = () => {};
   onProbe: () => void = () => {};
+  /** grid size parts snap to while dragging, in cm */
+  snap = 0.5;
+  /** simulation speed (0 while paused), so robots drive in step with the sketch */
+  timeScale = 1;
+  private wasRunning = false;
+  private grid: THREE.GridHelper | null = null;
+  private ghost: THREE.Mesh;
 
   /** Multimeter: while active, clicking terminals places the red, then the black probe. */
   probe = { active: false, red: null as string | null, black: null as string | null };
@@ -74,7 +81,10 @@ export class World {
   private spill: THREE.PointLight[] = [];
   private glows: THREE.Sprite[] = [];
   private glide: null | { from: THREE.Vector3; to: THREE.Vector3; fromT: THREE.Vector3; toT: THREE.Vector3; t: number } = null;
-  private drag: null | { part: Part; offset: THREE.Vector3; startX: number; startY: number; moved: boolean; mode: DragMode; startVal?: number } = null;
+  private drag: null | {
+    part: Part; offset: THREE.Vector3; startX: number; startY: number; moved: boolean; mode: DragMode; startVal?: number;
+    from: { x: number; z: number; mount?: string; mdx?: number; mdz?: number };
+  } = null;
   private wiring: null | { from: string; startX: number; startY: number; sticky: boolean } = null;
   private clock = new THREE.Clock();
   private emptyDown: { x: number; y: number } | null = null;
@@ -172,6 +182,12 @@ export class World {
     this.hoverDot.visible = false;
     this.scene.add(this.hoverDot);
     this.scene.add(this.probeMarks.red, this.probeMarks.black);
+    // footprint shown under a part while it's dragged: green where it fits, red where it would overlap
+    this.ghost = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ color: '#2fbf71', transparent: true, opacity: 0.28, depthWrite: false }));
+    this.ghost.rotation.x = -Math.PI / 2;
+    this.ghost.visible = false;
+    this.ghost.renderOrder = 2;
+    this.scene.add(this.ghost);
 
     this.scene.add(this.wireGroup, this.hitGroup);
 
@@ -297,6 +313,7 @@ export class World {
   }
 
   removePart(part: Part) {
+    for (const p of this.parts) if (p.props.mount === part.id) this.unmount(p); // passengers stay where they are
     if (part.group) this.scene.remove(part.group);
     this.audio.set(part.id, null);
     this.parts = this.parts.filter(p => p !== part);
@@ -332,6 +349,7 @@ export class World {
       if (m && 'envMapIntensity' in m && m.metalness < 0.5) m.envMapIntensity = 0.6;
     });
     part.group = g;
+    g.userData.foot = localFootprint(g);
     this.placeGroup(part);
     this.scene.add(g);
     this.wiresDirty = true;
@@ -366,9 +384,33 @@ export class World {
     });
   }
 
+  /** Where a part is right now: its spot on the desk, or where it has driven to while running. */
+  poseOf(p: Part): { x: number; z: number; a: number } {
+    return p.state.pose ?? { x: p.x, z: p.z, a: (-p.rot * Math.PI) / 2 };
+  }
+
+  /** The part this one is mounted on, if any. */
+  hostOf(p: Part): Part | undefined {
+    const id = p.props.mount;
+    return id ? this.parts.find(h => h.id === id && PARTS[h.type].deck) : undefined;
+  }
+
   private placeGroup(part: Part) {
-    part.group!.position.set(part.x, 0, part.z);
-    part.group!.rotation.y = (-part.rot * Math.PI) / 2;
+    const host = this.hostOf(part);
+    if (host) {
+      // ride on the host's deck: the offset is kept in the host's own frame
+      const hp = this.poseOf(host);
+      const c = Math.cos(hp.a), s = Math.sin(hp.a);
+      const dx = part.props.mdx ?? 0, dz = part.props.mdz ?? 0;
+      part.x = hp.x + dx * c + dz * s;
+      part.z = hp.z - dx * s + dz * c;
+      part.group!.position.set(part.x, PARTS[host.type].deck!.y, part.z);
+      part.group!.rotation.y = hp.a - (part.rot * Math.PI) / 2;
+    } else {
+      const p = this.poseOf(part);
+      part.group!.position.set(p.x, 0, p.z);
+      part.group!.rotation.y = p.a;
+    }
     part.group!.updateMatrixWorld(true);
   }
 
@@ -377,6 +419,118 @@ export class World {
     this.placeGroup(part);
     this.wiresDirty = true;
     this.onChange();
+  }
+
+  /** A part's footprint on the desk as an axis-aligned box, at a given spot (default: where it is). */
+  rectOf(p: Part, x?: number, z?: number, a?: number): { minX: number; maxX: number; minZ: number; maxZ: number } {
+    const f = p.group?.userData.foot ?? { minX: -1, maxX: 1, minZ: -1, maxZ: 1 };
+    const pose = this.poseOf(p);
+    const px = x ?? pose.x, pz = z ?? pose.z, ang = a ?? p.group?.rotation.y ?? pose.a;
+    const c = Math.cos(ang), s = Math.sin(ang);
+    const xs: number[] = [], zs: number[] = [];
+    for (const [lx, lz] of [[f.minX, f.minZ], [f.maxX, f.minZ], [f.minX, f.maxZ], [f.maxX, f.maxZ]]) {
+      xs.push(px + lx * c + lz * s);
+      zs.push(pz - lx * s + lz * c);
+    }
+    return { minX: Math.min(...xs), maxX: Math.max(...xs), minZ: Math.min(...zs), maxZ: Math.max(...zs) };
+  }
+
+  /** Would this part, at x/z, overlap anything solid? (Flat parts, its host and its passengers don't count.) */
+  blockedAt(part: Part, x: number, z: number, host?: Part, a?: number): boolean {
+    const r = this.rectOf(part, x, z, a ?? (host ? undefined : (-part.rot * Math.PI) / 2));
+    const m = 0.15; // parts may touch, not overlap
+    return this.parts.some(o => {
+      if (o === part || o === host || PARTS[o.type].flat || this.hostOf(o)) return false;
+      const q = this.rectOf(o);
+      return r.minX < q.maxX - m && r.maxX > q.minX + m && r.minZ < q.maxZ - m && r.maxZ > q.minZ + m;
+    });
+  }
+
+  /** A part with a deck whose deck lies under the point x/z. */
+  private deckUnder(part: Part, x: number, z: number): Part | undefined {
+    if (PARTS[part.type].deck) return undefined; // no stacking hosts on hosts
+    return this.parts.find(h => {
+      const d = PARTS[h.type].deck;
+      if (!d || h === part) return false;
+      const hp = this.poseOf(h), c = Math.cos(hp.a), s = Math.sin(hp.a);
+      const ox = x - hp.x, oz = z - hp.z;
+      const lx = ox * c - oz * s, lz = ox * s + oz * c; // into the host's frame
+      return lx >= d.minX && lx <= d.maxX && lz >= d.minZ && lz <= d.maxZ;
+    });
+  }
+
+  /** Mount a part on a host at its current spot, snapping the offset to the grid. */
+  mount(part: Part, host: Part) {
+    const hp = this.poseOf(host), c = Math.cos(hp.a), s = Math.sin(hp.a);
+    const ox = part.x - hp.x, oz = part.z - hp.z;
+    const g = this.snap || 0.25;
+    part.props.mount = host.id;
+    part.props.mdx = Math.round((ox * c - oz * s) / g) * g;
+    part.props.mdz = Math.round((ox * s + oz * c) / g) * g;
+    this.placeGroup(part);
+    this.wiresDirty = true;
+  }
+
+  unmount(part: Part) {
+    delete part.props.mount;
+    delete part.props.mdx;
+    delete part.props.mdz;
+  }
+
+  private showGrid(at: THREE.Vector3 | null) {
+    const step = this.snap || 0.25;
+    if (at && !this.grid) {
+      this.grid = new THREE.GridHelper(40, Math.round(40 / step), 0x2fbf71, 0x2fbf71);
+      const m = this.grid.material as THREE.LineBasicMaterial;
+      m.transparent = true;
+      m.opacity = 0.16;
+      m.depthWrite = false;
+      this.scene.add(this.grid);
+    }
+    if (!this.grid) return;
+    this.grid.visible = !!at;
+    // keep the lines on the snap grid as it follows the part
+    if (at) this.grid.position.set(Math.round(at.x / step) * step, 0.035, Math.round(at.z / step) * step);
+  }
+
+  /** Move robot bases by their wheel speeds; a new run starts them from their home spot. */
+  private driveRobots(dt: number) {
+    if (this.running !== this.wasRunning) {
+      this.wasRunning = this.running;
+      if (this.running) for (const p of this.parts) if (PARTS[p.type].drive) { delete p.state.pose; p.state.travelled = 0; p.state.bumps = 0; }
+    }
+    for (const p of this.parts) {
+      const def = PARTS[p.type];
+      if (!def.drive || !p.group) continue;
+      const powered = !p.state.missing?.length;
+      const sp = this.running && powered ? def.drive(p, this.board) : { left: 0, right: 0, track: 1 };
+      p.state.vl = sp.left;
+      p.state.vr = sp.right;
+      if ((!sp.left && !sp.right) || dt <= 0) continue;
+      let pose = { ...this.poseOf(p) };
+      const steps = Math.max(1, Math.ceil(dt / 0.02));
+      for (let i = 0; i < steps; i++) {
+        const h = dt / steps;
+        const v = (sp.left + sp.right) / 2;
+        const a = pose.a + ((sp.right - sp.left) / sp.track) * h; // faster right wheel turns it left
+        const x = THREE.MathUtils.clamp(pose.x - v * Math.sin(a) * h, -DESK, DESK);
+        const z = THREE.MathUtils.clamp(pose.z - v * Math.cos(a) * h, -DESK, DESK);
+        if (this.blockedAt(p, x, z, undefined, a)) {
+          if (!(p.state.bumpUntil > performance.now())) this.audio.click();
+          p.state.bumpUntil = performance.now() + 600;
+          p.state.bumps = (p.state.bumps ?? 0) + 1;
+          break;
+        }
+        pose = { x, z, a };
+        p.state.travelled = (p.state.travelled ?? 0) + Math.abs(v) * h;
+      }
+      p.state.pose = pose;
+    }
+  }
+
+  setSnap(step: number) {
+    this.snap = step;
+    if (this.grid) { this.scene.remove(this.grid); this.grid = null; }
   }
 
   /** Footprint radius of a part on the desk, in cm. */
@@ -676,6 +830,7 @@ export class World {
       part, mode, moved: false, startX: e.clientX, startY: e.clientY,
       offset: new THREE.Vector3(part.x - gp.x, 0, part.z - gp.z),
       startVal: def.knob ? part.props[def.knob.key] : undefined,
+      from: { x: part.x, z: part.z, mount: part.props.mount, mdx: part.props.mdx, mdz: part.props.mdz },
     };
     if (mode === 'press' || mode === 'stick') {
       // a joystick click (without dragging) presses its built-in button
@@ -722,11 +877,22 @@ export class World {
     } else if (d.mode === 'move') {
       const gp = this.groundPoint(e);
       if (!gp) return;
-      d.part.x = THREE.MathUtils.clamp(Math.round((gp.x + d.offset.x) * 4) / 4, -DESK, DESK);
-      d.part.z = THREE.MathUtils.clamp(Math.round((gp.z + d.offset.z) * 4) / 4, -DESK, DESK);
+      if (d.part.props.mount) this.unmount(d.part); // lifted off its host while dragging
+      const g = this.snap || 0.25;
+      d.part.x = THREE.MathUtils.clamp(Math.round((gp.x + d.offset.x) / g) * g, -DESK, DESK);
+      d.part.z = THREE.MathUtils.clamp(Math.round((gp.z + d.offset.z) / g) * g, -DESK, DESK);
+      delete d.part.state.pose; // dragging a robot puts it back on its home spot
       this.placeGroup(d.part);
       this.wiresDirty = true;
       this.renderer.domElement.style.cursor = 'grabbing';
+      const host = this.deckUnder(d.part, d.part.x, d.part.z);
+      const bad = !host && this.blockedAt(d.part, d.part.x, d.part.z);
+      const r = this.rectOf(d.part);
+      this.ghost.visible = true;
+      this.ghost.scale.set(r.maxX - r.minX, r.maxZ - r.minZ, 1);
+      this.ghost.position.set((r.minX + r.maxX) / 2, host ? PARTS[host.type].deck!.y + 0.03 : 0.04, (r.minZ + r.maxZ) / 2);
+      (this.ghost.material as THREE.MeshBasicMaterial).color.set(bad ? '#e2533b' : host ? '#2f7bff' : '#2fbf71');
+      this.showGrid(d.part.group!.position);
     }
   }
 
@@ -759,7 +925,24 @@ export class World {
       setTimeout(() => { p.state.pressed = false; }, 220);
     }
     if (d.mode === 'stick') { d.part.state.sx = 0; d.part.state.sy = 0; d.part.state.pressed = false; }
-    if (d.moved && d.mode === 'move') this.audio.sfx('place');
+    if (d.moved && d.mode === 'move') {
+      this.ghost.visible = false;
+      this.showGrid(null);
+      const host = this.deckUnder(d.part, d.part.x, d.part.z);
+      if (host) {
+        this.mount(d.part, host);
+        this.audio.sfx('snap');
+      } else if (this.blockedAt(d.part, d.part.x, d.part.z)) {
+        // it would overlap another part: slide back to where it came from
+        const f = d.from;
+        d.part.x = f.x;
+        d.part.z = f.z;
+        if (f.mount) Object.assign(d.part.props, { mount: f.mount, mdx: f.mdx, mdz: f.mdz });
+        this.placeGroup(d.part);
+        this.wiresDirty = true;
+        this.audio.sfx('unsnap');
+      } else this.audio.sfx('place');
+    }
     if (!d.moved || d.mode !== 'move') this.select(d.part);
     if (d.moved || d.mode === 'press') this.onChange();
   }
@@ -783,6 +966,12 @@ export class World {
       this.rebuildWires();
       if (this.hoverEp) this.setHover(this.hoverEp);
     }
+    this.driveRobots(dt * this.timeScale);
+    // passengers follow their hosts (a robot driving, or a host being dragged)
+    let riding = false;
+    for (const p of this.parts) if (p.props.mount && p.group) { this.placeGroup(p); riding = true; }
+    for (const p of this.parts) if (p.state.pose && p.group) { this.placeGroup(p); riding = true; }
+    if (riding && (this.running || this.drag)) this.wiresDirty = true;
     const obstacles = this.parts.filter(p => PARTS[p.type].obstacle && p.group).map(p => p.group!);
     for (const p of this.parts) {
       const powered = !p.state.missing?.length;
@@ -810,6 +999,23 @@ export class World {
     this.controls.update();
     this.composer.render();
   }
+}
+
+/** The part's footprint in its own frame, from its solid meshes (glows and labels don't count). */
+function localFootprint(g: THREE.Group): { minX: number; maxX: number; minZ: number; maxZ: number } {
+  const box = new THREE.Box3();
+  g.updateMatrixWorld(true);
+  const inv = new THREE.Matrix4().copy(g.matrixWorld).invert();
+  g.traverse(o => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh || !mesh.visible) return;
+    const mat = mesh.material as THREE.Material;
+    if (mat.transparent && (mat as THREE.MeshBasicMaterial).opacity === 0) return;
+    mesh.geometry.computeBoundingBox();
+    box.union(mesh.geometry.boundingBox!.clone().applyMatrix4(new THREE.Matrix4().multiplyMatrices(inv, mesh.matrixWorld)));
+  });
+  if (box.isEmpty()) return { minX: -1, maxX: 1, minZ: -1, maxZ: 1 };
+  return { minX: box.min.x, maxX: box.max.x, minZ: box.min.z, maxZ: box.max.z };
 }
 
 /** A multimeter probe resting on a terminal: a coloured handle and a steel tip. */
