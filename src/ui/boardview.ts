@@ -1,0 +1,124 @@
+// Live board diagram: a flat drawing of the Builder One whose pins light up with
+// their state (HIGH, LOW, PWM, input readings, tones, servo signals) and say what
+// is wired to them. The drawing is built once per circuit and recoloured live.
+import type { Board } from '../sim/board';
+import { PWM_PINS } from '../sim/board';
+import { PARTS, type Part } from '../sim/parts';
+
+const name = (p: number) => (p >= 14 ? `A${p - 14}` : `${p}`);
+
+// where each socket sits in the drawing (viewBox 640 × 290)
+const TOP_Y = 66, BOTTOM_Y = 228;
+const DIGITAL = [13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0];
+const digitalX = (i: number) => 128 + i * 34 + (i >= 6 ? 14 : 0);
+const POWER = ['3V3', '5V', 'GND', 'GND', 'VIN'];
+const powerX = (i: number) => 150 + i * 30;
+// analog pins sit between the digital pins above, so their tags interleave instead of colliding
+const analogX = (i: number) => digitalX(i + 7) - 17;
+
+export interface PinUse { label: string; part: Part; key: string }
+
+/** Who uses each board pin, from the parts' solved pin assignments. */
+export function pinUsers(parts: Part[]): Map<number, PinUse[]> {
+  const out = new Map<number, PinUse[]>();
+  for (const p of parts) {
+    for (const [key, pin] of Object.entries(p.pins)) {
+      if (pin == null) continue;
+      const t = PARTS[p.type].terminals(p).find(x => x.key === key);
+      const short = PARTS[p.type].name.replace(/\s*\(.*\)/, '').replace(/ (Sensor|Module|Display|Switch)$/, '');
+      // with several pins, the pin's own name matters most: "Robot IN4", "Line Left eye"
+      const label = Object.keys(p.pins).length > 1 && t ? `${short.split(' ')[0]} ${t.label.replace(/\s*\(.*\)/, '')}` : short;
+      out.set(pin, [...(out.get(pin) ?? []), { label, part: p, key }]);
+    }
+  }
+  return out;
+}
+
+export type PinLook = { cls: string; value: string; detail: string };
+
+/** How a pin looks right now: a CSS class for its colour, a short value and a sentence for the tooltip. */
+export function pinLook(board: Board, pin: number, running: boolean): PinLook {
+  const p = board.pins[pin];
+  if (!running) return { cls: 'idle', value: '', detail: 'Press Run to see it live' };
+  if (board.activeTone(pin) != null) return { cls: 'tone', value: `${Math.round(board.activeTone(pin)!)} Hz`, detail: `Playing a ${Math.round(board.activeTone(pin)!)} Hz tone` };
+  const servo = board.servoAngles.get(pin);
+  if (servo != null && [...board.servoPins.values()].includes(pin)) return { cls: 'servo', value: `${Math.round(servo)}°`, detail: `Servo signal: ${Math.round(servo)}°` };
+  if (p.mode === 'OUTPUT') {
+    if (p.pwm != null && p.pwm > 0 && p.pwm < 255) {
+      const pct = Math.round((p.pwm / 255) * 100);
+      return { cls: 'pwm', value: `${pct}%`, detail: `OUTPUT, PWM ${p.pwm} of 255 (${pct}% on)` };
+    }
+    return board.level(pin) > 0.5 ? { cls: 'high', value: 'HIGH', detail: 'OUTPUT, HIGH (5 V)' } : { cls: 'low', value: 'LOW', detail: 'OUTPUT, LOW (0 V)' };
+  }
+  if (pin >= 14) {
+    const a = board.peekAnalog(pin);
+    if (a != null) return { cls: 'analog', value: `${Math.round(a * 1023)}`, detail: `Analog input reading about ${Math.round(a * 1023)} of 1023` };
+  }
+  const d = board.peekDigital(pin);
+  const mode = p.mode === 'INPUT_PULLUP' ? 'INPUT_PULLUP' : 'INPUT';
+  if (d == null) return { cls: 'float', value: '?', detail: `${mode}, floating: nothing holds it HIGH or LOW` };
+  return d ? { cls: 'in-high', value: 'HIGH', detail: `${mode}, reads HIGH` } : { cls: 'in-low', value: 'LOW', detail: `${mode}, reads LOW` };
+}
+
+export class BoardView {
+  private key = '';
+  constructor(private el: HTMLElement) {}
+
+  /** Rebuild the drawing when the wiring changes, then recolour every pin. */
+  update(parts: Part[], board: Board, running: boolean) {
+    const users = pinUsers(parts);
+    const key = JSON.stringify([...users].map(([pin, u]) => [pin, u.map(x => x.label)]));
+    if (key !== this.key) {
+      this.key = key;
+      this.el.innerHTML = this.draw();
+    }
+    for (const g of this.el.querySelectorAll<SVGGElement>('[data-pin]')) {
+      const pin = Number(g.dataset.pin);
+      const used = users.has(pin) || board.pins[pin].mode === 'OUTPUT';
+      const look = used ? pinLook(board, pin, running) : { cls: 'unused', value: '', detail: 'Not used' };
+      const cls = `bv-pin ${look.cls}${used ? ' used' : ''}`;
+      if (g.getAttribute('class') !== cls) g.setAttribute('class', cls);
+      const val = g.querySelector('.bv-val');
+      const names = users.get(pin)?.map(u => u.label).join(', ') ?? (pin === 13 && used ? 'built-in LED' : '');
+      // keep the live value whole; shorten the part name to make room
+      const room = 16 - (look.value ? look.value.length + 3 : 0);
+      const nm = names.length > room ? `${names.slice(0, Math.max(1, room - 1))}…` : names;
+      const text = look.value && nm ? `${nm} · ${look.value}` : nm || look.value;
+      if (val && val.textContent !== text) val.textContent = text;
+      const title = g.querySelector('title');
+      const tip = `Pin ${name(pin)}${PWM_PINS.has(pin) ? ' (~ PWM)' : ''}: ${look.detail}${names ? `. Wired to ${names}` : ''}`;
+      if (title && title.textContent !== tip) title.textContent = tip;
+      // PWM shows as brightness
+      const dot = g.querySelector<SVGCircleElement>('.bv-dot');
+      const pwm = board.pins[pin].pwm;
+      const op = look.cls === 'pwm' && pwm != null ? String(0.35 + 0.65 * (pwm / 255)) : '';
+      if (dot && dot.style.opacity !== op) dot.style.opacity = op;
+    }
+  }
+
+  private draw(): string {
+    const pinG = (pin: number, x: number, y: number, top: boolean) => {
+      // tags run away from the board edge: down from the top header, up from the bottom one
+      const tagY = top ? y + 18 : y - 18;
+      return `<g data-pin="${pin}" class="bv-pin unused" transform="translate(${x} ${y})"><title></title>
+        <circle class="bv-halo" r="12"/><circle class="bv-dot" r="7.5"/>
+        <text class="bv-num" y="${top ? -17 : 27}" text-anchor="middle">${name(pin)}${PWM_PINS.has(pin) ? '~' : ''}</text>
+        <text class="bv-val" transform="translate(0 ${tagY - y}) rotate(${top ? 90 : -90})" text-anchor="start" dy="3"></text></g>`;
+    };
+    const fixed = (label: string, x: number, y: number, cls: string) =>
+      `<g class="bv-fixed ${cls}" transform="translate(${x} ${y})"><circle r="7.5"/><text y="27" text-anchor="middle">${label}</text></g>`;
+    return `<svg viewBox="0 0 640 290" class="bv" role="img" aria-label="Live diagram of the board's pins">
+      <rect x="40" y="38" width="586" height="214" rx="14" class="bv-board"/>
+      <rect x="18" y="70" width="40" height="48" rx="5" class="bv-usb"/><rect x="24" y="190" width="30" height="36" rx="4" class="bv-jack"/>
+      <rect x="250" y="128" width="200" height="34" rx="4" class="bv-chip"/><text x="350" y="150" text-anchor="middle" class="bv-brand">BUILDER ONE</text>
+      <rect x="80" y="${TOP_Y - 11}" width="${digitalX(13) - 80 + 20}" height="22" rx="5" class="bv-header"/>
+      <rect x="${powerX(0) - 16}" y="${BOTTOM_Y - 11}" width="${powerX(4) - powerX(0) + 32}" height="22" rx="5" class="bv-header"/>
+      <rect x="${analogX(0) - 16}" y="${BOTTOM_Y - 11}" width="${analogX(5) - analogX(0) + 32}" height="22" rx="5" class="bv-header"/>
+      ${fixed('GND', 96, TOP_Y, 'gnd')}
+      ${DIGITAL.map((p, i) => pinG(p, digitalX(i), TOP_Y, true)).join('')}
+      ${POWER.map((l, i) => fixed(l, powerX(i), BOTTOM_Y, l === 'GND' ? 'gnd' : 'pwr')).join('')}
+      ${[0, 1, 2, 3, 4, 5].map(i => pinG(14 + i, analogX(i), BOTTOM_Y, false)).join('')}
+      <text x="128" y="26" class="bv-cap">DIGITAL (~ = PWM)</text><text x="${analogX(0) - 10}" y="284" class="bv-cap">ANALOG IN</text><text x="${powerX(0) - 10}" y="284" class="bv-cap">POWER</text>
+    </svg>`;
+  }
+}
