@@ -497,7 +497,7 @@ export class World {
   private driveRobots(dt: number) {
     if (this.running !== this.wasRunning) {
       this.wasRunning = this.running;
-      if (this.running) for (const p of this.parts) if (PARTS[p.type].drive) { delete p.state.pose; p.state.travelled = 0; p.state.bumps = 0; }
+      if (this.running) for (const p of this.parts) if (PARTS[p.type].drive) { delete p.state.pose; p.state.travelled = 0; p.state.bumps = 0; p.state.distL = 0; p.state.distR = 0; }
     }
     for (const p of this.parts) {
       const def = PARTS[p.type];
@@ -506,6 +506,7 @@ export class World {
       const sp = this.running && powered ? def.drive(p, this.board) : { left: 0, right: 0, track: 1 };
       p.state.vl = sp.left;
       p.state.vr = sp.right;
+      p.state.odoAt = this.board.time; // wheel encoders extrapolate from here as sketch time moves on
       if ((!sp.left && !sp.right) || dt <= 0) continue;
       let pose = { ...this.poseOf(p) };
       const steps = Math.max(1, Math.ceil(dt / 0.02));
@@ -518,11 +519,15 @@ export class World {
         if (this.blockedAt(p, x, z, undefined, a)) {
           if (!(p.state.bumpUntil > performance.now())) this.audio.click();
           p.state.bumpUntil = performance.now() + 600;
+          p.state.bumpAt = this.board.time;
+          p.state.bumpFwd = (sp.left + sp.right) / 2 > 0;
           p.state.bumps = (p.state.bumps ?? 0) + 1;
           break;
         }
         pose = { x, z, a };
         p.state.travelled = (p.state.travelled ?? 0) + Math.abs(v) * h;
+        p.state.distL = (p.state.distL ?? 0) + Math.abs(sp.left) * h;
+        p.state.distR = (p.state.distR ?? 0) + Math.abs(sp.right) * h;
       }
       p.state.pose = pose;
     }
