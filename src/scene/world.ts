@@ -13,6 +13,7 @@ import { buildWorkshop, woodTexture } from './workshop';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { Board, type PinListener } from '../sim/board';
 import { AudioOut, BOARD_TERMINALS, PARTS, type Part } from '../sim/parts';
+import { pinLook } from '../ui/boardview';
 import { colorFor, endpoint, endpointExists, endpointLabel, newWireId, solve, splitEndpoint, type Issue, type Wire } from '../sim/circuit';
 
 export { wireColor } from '../sim/circuit';
@@ -50,6 +51,10 @@ export class World {
   onProbe: () => void = () => {};
   /** grid size parts snap to while dragging, in cm */
   snap = 0.5;
+  /** view options: pin labels over the board, the camera riding with a robot, wires drawn through parts */
+  view = { pinLabels: 'used' as 'off' | 'used' | 'all', follow: false, wiresOnTop: false };
+  private pinTags = new Map<number, { sprite: THREE.Sprite; line: THREE.Line; draw: (cls: string) => void; cls: string }>();
+  private tagsAt = 0;
   /** simulation speed (0 while paused), so robots drive in step with the sketch */
   timeScale = 1;
   private wasRunning = false;
@@ -241,8 +246,14 @@ export class World {
     this.matMat.needsUpdate = true;
   }
 
+  /** Glide to a standard angle: the friendly 3/4 view, straight down, from the front or from the side. */
+  setView(kind: 'angled' | 'top' | 'front' | 'side') {
+    const dir = { angled: [0.12, 0.72, 0.68], top: [0, 1, 0.02], front: [0, 0.3, 1], side: [1, 0.3, 0] }[kind];
+    this.resetView(true, new THREE.Vector3(...dir));
+  }
+
   /** Point the camera at all parts, from a friendly 3/4 angle (gliding there unless told not to). */
-  resetView(animate = true) {
+  resetView(animate = true, from = new THREE.Vector3(0.12, 0.72, 0.68)) {
     const box = new THREE.Box3();
     for (const p of this.parts) if (p.group) box.expandByObject(p.group);
     if (box.isEmpty()) box.set(new THREE.Vector3(-4, 0, -3), new THREE.Vector3(4, 2, 3));
@@ -253,7 +264,7 @@ export class World {
     const fit = radius / Math.sin(fov / 2) / Math.min(1, this.camera.aspect * 0.9);
     const dist = THREE.MathUtils.clamp(fit * 0.9, this.controls.minDistance, this.controls.maxDistance);
     center.y = 0;
-    const to = center.clone().add(new THREE.Vector3(0.12, 0.72, 0.68).normalize().multiplyScalar(dist));
+    const to = center.clone().add(from.clone().normalize().multiplyScalar(dist));
     if (!animate || matchMedia('(prefers-reduced-motion: reduce)').matches) {
       this.glide = null;
       this.controls.target.copy(center);
@@ -533,6 +544,50 @@ export class World {
     }
   }
 
+  /** Keep the camera on a driving robot, without changing the angle. */
+  private followRobot() {
+    if (!this.view.follow || this.glide) return;
+    const robot = this.parts.find(p => PARTS[p.type].drive && p.group);
+    if (!robot) return;
+    const pose = this.poseOf(robot);
+    const delta = new THREE.Vector3(pose.x, 0, pose.z).sub(this.controls.target).setY(0).multiplyScalar(0.12);
+    this.controls.target.add(delta);
+    this.camera.position.add(delta);
+  }
+
+  /** Little numbered tags over the board's sockets, coloured like the live board diagram. */
+  private updatePinTags() {
+    const uno = this.uno;
+    const mode = this.view.pinLabels;
+    const used = new Set<number>();
+    for (const p of this.parts) for (const pin of Object.values(p.pins)) if (pin != null) used.add(pin);
+    for (let pin = 0; pin < 20; pin++) if (this.board.pins[pin].mode === 'OUTPUT' && this.running) used.add(pin);
+    for (let pin = 0; pin < 20; pin++) {
+      const show = !!uno?.group && mode !== 'off' && (mode === 'all' || used.has(pin));
+      let tag = this.pinTags.get(pin);
+      if (!show) { if (tag) tag.sprite.visible = tag.line.visible = false; continue; }
+      if (!tag) { tag = makePinTag(pin); this.pinTags.set(pin, tag); this.scene.add(tag.sprite, tag.line); }
+      const term = BOARD_TERMINALS.find(t => t.pin === pin)!;
+      // fan out past the board's edge in three staggered rows, so neighbouring sockets' tags don't overlap
+      const out = Math.sign(term.pos.z) * (0.75 + (pin % 3) * 0.62);
+      const at = uno!.group!.localToWorld(term.pos.clone());
+      const tip = uno!.group!.localToWorld(term.pos.clone().add(new THREE.Vector3(0, 0.55 + (pin % 3) * 0.12, out)));
+      tag.sprite.position.copy(tip);
+      const pos = tag.line.geometry.attributes.position as THREE.BufferAttribute;
+      pos.setXYZ(0, at.x, at.y + 0.05, at.z);
+      pos.setXYZ(1, tip.x, tip.y - 0.12, tip.z);
+      pos.needsUpdate = true;
+      tag.sprite.visible = tag.line.visible = true;
+      const cls = used.has(pin) ? pinLook(this.board, pin, this.running).cls : 'unused';
+      if (cls !== tag.cls) { tag.cls = cls; tag.draw(cls); }
+    }
+  }
+
+  setWiresOnTop(on: boolean) {
+    this.view.wiresOnTop = on;
+    this.wiresDirty = true;
+  }
+
   setSnap(step: number) {
     this.snap = step;
     if (this.grid) { this.scene.remove(this.grid); this.grid = null; }
@@ -662,9 +717,15 @@ export class World {
       const a = this.endpointPos(w.a), b = this.endpointPos(w.b);
       if (!a || !b) continue;
       const jumper = jumperWire(a, b, w.color, w === this.selectedWire);
-      jumper.traverse(o => { o.userData.wireId = w.id; });
+      jumper.traverse(o => {
+        o.userData.wireId = w.id;
+        // "wires on top": draw them through the parts, so you can trace every connection
+        const m = (o as THREE.Mesh).material as THREE.Material | undefined;
+        if (m && this.view.wiresOnTop) { m.depthTest = false; o.renderOrder = 12; }
+      });
       this.wireGroup.add(jumper);
     }
+    plugMat.depthTest = !this.view.wiresOnTop;
     // invisible hit targets for every terminal
     const hitMat = new THREE.MeshBasicMaterial({ visible: false });
     const hitGeo = new THREE.SphereGeometry(0.26, 8, 6);
@@ -996,6 +1057,8 @@ export class World {
       this.probeMarks[k].visible = !!at;
       if (at) this.probeMarks[k].position.copy(at);
     }
+    this.followRobot();
+    if (performance.now() - this.tagsAt > 120) { this.tagsAt = performance.now(); this.updatePinTags(); }
     if (this.hoverDot.visible) this.hoverDot.scale.setScalar(1 + Math.sin(performance.now() / 150) * 0.15);
     this.updateSpill();
     const outlined = [this.selected, this.hoverPart].filter((p): p is Part => !!p?.group).map(p => p.group!);
@@ -1021,6 +1084,45 @@ function localFootprint(g: THREE.Group): { minX: number; maxX: number; minZ: num
   });
   if (box.isEmpty()) return { minX: -1, maxX: 1, minZ: -1, maxZ: 1 };
   return { minX: box.min.x, maxX: box.max.x, minZ: box.min.z, maxZ: box.max.z };
+}
+
+const TAG_COLORS: Record<string, string> = {
+  high: '#ff4d3d', low: '#3a3f47', pwm: '#ff9f1c', 'in-high': '#3b82f6', 'in-low': '#1f3f73', analog: '#16a79a',
+  float: '#6b7280', servo: '#8b6cf0', tone: '#8b6cf0', idle: '#4b5563', unused: '#2b2f36',
+};
+
+/** A numbered tag (and a thin leader line down to its socket) for one board pin. */
+function makePinTag(pin: number) {
+  const c = document.createElement('canvas');
+  c.width = 96;
+  c.height = 56;
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
+  sprite.renderOrder = 15;
+  sprite.scale.set(0.62, 0.36, 1);
+  const label = pin >= 14 ? `A${pin - 14}` : String(pin);
+  const draw = (cls: string) => {
+    const g = c.getContext('2d')!;
+    g.clearRect(0, 0, c.width, c.height);
+    g.fillStyle = TAG_COLORS[cls] ?? '#2b2f36';
+    g.strokeStyle = cls === 'unused' ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.85)';
+    g.lineWidth = 4;
+    g.beginPath();
+    g.roundRect(4, 4, c.width - 8, c.height - 8, 20);
+    g.fill();
+    g.stroke();
+    g.fillStyle = '#ffffff';
+    g.font = '700 30px "IBM Plex Mono", monospace';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText(label, c.width / 2, c.height / 2 + 1);
+    tex.needsUpdate = true;
+  };
+  const geo = new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+  const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.55, depthTest: false }));
+  line.renderOrder = 14;
+  return { sprite, line, draw, cls: '' };
 }
 
 /** A multimeter probe resting on a terminal: a coloured handle and a steel tip. */
