@@ -775,7 +775,7 @@ body.instructor-on .guide { max-height: calc(100% - 40px); }
 
 /* phone app for the Bluetooth module */
 .phone {
-  position: absolute; right: 16px; top: 16px; z-index: 7; width: 230px; height: min(430px, calc(100% - 90px));
+  position: absolute; right: 16px; top: 16px; z-index: 7; width: 230px; height: min(510px, calc(100% - 90px));
   padding: 8px; border-radius: 30px; background: #111214; box-shadow: 0 20px 40px -14px rgba(0, 0, 0, 0.6), inset 0 0 0 2px #2c2e33;
 }
 .phone-screen { display: flex; flex-direction: column; height: 100%; border-radius: 23px; overflow: hidden; background: #f3f4f6; color: #16181d; }
@@ -833,3 +833,9 @@ body.instructor-on .guide { max-height: calc(100% - 40px); }
 .tm-legend i { display: inline-block; margin-left: 8px; }
 .tm-foot { margin-top: 12px; }
 @media (max-width: 600px) { .tm-fields, .tm-stats { grid-template-columns: 1fr; } .tm-invite, .tm-bar { flex-direction: column; align-items: stretch; } }
+.phone-pad {
+  display: grid; grid-template-areas: '. f .' 'l s r' '. b .'; grid-template-columns: repeat(3, 34px); gap: 4px;
+  justify-content: center; padding: 6px 0 0;
+}
+.phone-pad button { height: 28px; border: 1px solid #d5d8de; border-radius: 9px; background: #fff; color: #16181d; font-size: 12px; }
+.phone-pad button[data-send='S'] { background: #fde8e6; }

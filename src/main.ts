@@ -594,7 +594,7 @@ $('phone-form').addEventListener('submit', e => {
   phoneSend(input.value);
   input.value = '';
 });
-phoneEl.querySelector('.phone-quick')!.addEventListener('click', e => {
+phoneEl.querySelector('.phone-screen')!.addEventListener('click', e => {
   const b = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-send]');
   if (b) phoneSend(b.dataset.send!);
 });
