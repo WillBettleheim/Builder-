@@ -3,6 +3,26 @@
 export interface Question { q: string; a: string[]; correct: number; why: string }
 
 export const QUIZZES: Record<string, Question[]> = {
+  'bumper-bot': [
+    { q: 'With INPUT_PULLUP, what does the bumper read when it hits a wall?', a: ['LOW', 'HIGH', '1023'], correct: 0, why: 'Pressing the lever connects the pin to GND, pulling it LOW.' },
+    { q: 'What does a bumper tell you that an ultrasonic sensor doesn’t?', a: ['That the robot has actually touched something', 'How far away the wall is', 'The colour of the wall'], correct: 0, why: 'A bumper is a last line of defence: it only knows about a real touch, not distance.' },
+  ],
+  'phone-robot': [
+    { q: 'What travels from the phone to the robot when you press ▲?', a: ['The letter F', 'A picture of an arrow', 'A voltage on pin 5'], correct: 0, why: 'The app sends a character over Bluetooth; the sketch decides what each character means.' },
+    { q: 'Why does the robot keep going after you let go of ▲?', a: ['drive() keeps the motors running until another command changes them', 'The phone keeps sending F', 'Motors can’t stop'], correct: 0, why: 'The sketch only changes the motors when a new letter arrives, so ■ (S) is needed to stop.' },
+  ],
+  odometry: [
+    { q: 'Why count pulses with an interrupt?', a: ['Pulses are fast and short; an interrupt never misses one', 'Interrupts make the robot faster', 'digitalRead() doesn’t work on pin 2'], correct: 0, why: 'loop() might be busy in delay() when a pulse happens. The interrupt counts it anyway.' },
+    { q: 'One wheel turn is 20 pulses and the wheel is 20 cm around. How far is 50 pulses?', a: ['About 50 cm', 'About 20 cm', 'About 1000 cm'], correct: 0, why: 'Each pulse is 1/20 of a turn, about 1 cm, so 50 pulses is about 50 cm.' },
+  ],
+  'light-seeker': [
+    { q: 'The right eye reads 600 and the left 200. Where is the light?', a: ['To the right', 'To the left', 'Behind'], correct: 0, why: 'The eye facing the light sees the most, so steer toward the brighter side.' },
+    { q: 'How does the robot know it has arrived?', a: ['Both eyes read very bright', 'The beacon sends a message', 'It counts to ten'], correct: 0, why: 'Light gets stronger as you get closer, so high readings on both eyes mean it’s right there.' },
+  ],
+  patrol: [
+    { q: 'Why return right after drive(0, 0) when blocked?', a: ['To skip the line-following code so the robot stays stopped', 'return switches the board off', 'It resets the sensor'], correct: 0, why: 'return ends this pass of loop(); next time round it checks the obstacle again.' },
+    { q: 'What does the IR obstacle sensor’s OUT read when something is close?', a: ['LOW', 'HIGH', 'A distance in cm'], correct: 0, why: 'It’s active-low: OUT drops LOW (and its light comes on) when it sees something.' },
+  ],
   'robot-drive': [
     { q: 'Why does the robot need a motor driver?', a: ['A board pin can’t supply enough current for a motor', 'Motors only understand Bluetooth', 'It makes the code shorter'], correct: 0, why: 'Pins give a few milliamps; motors need far more. The driver switches the battery power on the board’s command.' },
     { q: 'How does a 2-wheel robot turn on the spot?', a: ['One wheel forward, the other backward', 'Both wheels forward faster', 'It can’t turn'], correct: 0, why: 'Spinning the wheels in opposite directions rotates it around its middle.' },

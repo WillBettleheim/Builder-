@@ -3084,13 +3084,357 @@ void loop() {}
   },
 );
 
+// ---------- more robot programs: bumpers, phone control, encoders, light seeking, patrolling ----------
+const ARENA: PartSpec[] = [
+  ...[-20, 0, 20].flatMap(x => [{ type: 'wall', x, z: -23, props: { len: '20' } }, { type: 'wall', x, z: 39, props: { len: '20' } }]),
+  ...[-12, 8, 28].flatMap(z => [{ type: 'wall', x: -31, z, rot: 1, props: { len: '20', color: '#3b82c4' } }, { type: 'wall', x: 31, z, rot: 1, props: { len: '20', color: '#3b82c4' } }]),
+];
+const robotStopped = (c: GoalCtx) => { const r = robotOf(c); return !!r && Math.abs(r.state.vl ?? 0) + Math.abs(r.state.vr ?? 0) < 0.5; };
+const LINE_FOLLOW_LOOP = `  if (left && right) {
+    drive(150, 150);
+  } else if (left) {
+    drive(0, 150);
+    lastTurn = 1;
+  } else if (right) {
+    drive(150, 0);
+    lastTurn = -1;
+  } else if (lastTurn == 1) {
+    drive(-60, 140);
+  } else {
+    drive(140, -60);
+  }`;
+
+LESSONS.push(
+  {
+    id: 'bumper-bot',
+    title: 'Robot: Bump and Turn',
+    icon: 'bumper',
+    level: 'Robotics',
+    intro: `
+<p>The simplest way for a robot to know it hit something: a <strong>bumper switch</strong>. Its long lever sticks out in front, and touching a wall pushes it in.</p>
+<p>It’s wired like the button in <em>The Ghost Button</em>: to GND, with <code>INPUT_PULLUP</code>, so it reads <code>LOW</code> when pressed.</p>
+<pre>if (digitalRead(BUMPER) == LOW) {
+  // ouch! back up and turn
+}</pre>
+<p>Real robot vacuums started out exactly like this.</p>`,
+    parts: [boardOn('bumper-bot'), { type: 'robot', x: 0, z: 8, pins: ROBOT_PINS }, { type: 'bumper', x: 0, z: 0, pins: { sig: 2 }, props: { mount: 'bumper-bot-1', mdx: 0, mdz: -8.4 } }, ...ARENA],
+    code: `${MOTOR_SETUP}
+const int BUMPER = 2;
+
+void setup() {
+  Serial.begin(9600);
+${MOTOR_PINMODES}
+  pinMode(BUMPER, INPUT_PULLUP);
+}
+
+void loop() {
+  if (digitalRead(BUMPER) == LOW) {
+    Serial.println("BUMP!");
+    // TODO: back up a little, then turn away
+  }
+  drive(170, 170);
+  delay(10);
+}
+`,
+    solution: `${MOTOR_SETUP}
+const int BUMPER = 2;
+
+void setup() {
+  Serial.begin(9600);
+${MOTOR_PINMODES}
+  pinMode(BUMPER, INPUT_PULLUP);
+}
+
+void loop() {
+  if (digitalRead(BUMPER) == LOW) {
+    Serial.println("BUMP!");
+    drive(-150, -150);   // back off the wall
+    delay(400);
+    drive(150, -150);    // turn right
+    delay(700);
+  }
+  drive(170, 170);
+  delay(10);
+}
+`,
+    goals: [
+      { text: 'Feel a bump: “BUMP!” in the Serial Monitor', check: c => /bump/i.test(c.serial) },
+      { text: 'Bounce off 3 walls', check: (c, m) => { const t = !!c.part('bumper')?.state.touching; if (t && !m.down && robotOf(c)?.state.pose) m.n = (m.n ?? 0) + 1; m.down = t; return seen(m, 'x', (m.n ?? 0) >= 3 && (robotOf(c)?.state.travelled ?? 0) > 40); } },
+      { text: 'Keep exploring for 25 seconds', check: (c, m) => seen(m, 'x', c.board.time >= 25000 && (robotOf(c)?.state.travelled ?? 0) >= 120) },
+    ],
+  },
+  {
+    id: 'phone-robot',
+    title: 'Robot: Phone Remote Control',
+    icon: 'bluetooth',
+    level: 'Robotics',
+    intro: `
+<p>Turn the robot into a remote-control car. The <strong>Bluetooth module</strong> on its deck receives letters from the phone app’s arrow pad:</p>
+<pre>▲ F   forward      ▼ B   back
+◀ L   turn left    ▶ R   turn right
+■ S   stop</pre>
+<p>Click the Bluetooth module and choose <strong>📱 Open phone app</strong>. The starter only knows <b>F</b> and <b>S</b>: teach it the rest.</p>`,
+    parts: [boardOn('phone-robot'), { type: 'robot', x: 0, z: 8, pins: ROBOT_PINS }, { type: 'bluetooth', x: 0, z: 0, pins: { txd: 11, rxd: 12 }, props: { mount: 'phone-robot-1', mdx: -3.5, mdz: -6 } }],
+    code: `#include <SoftwareSerial.h>
+
+SoftwareSerial bt(11, 12);   // RX, TX
+${MOTOR_SETUP}
+void setup() {
+  bt.begin(9600);
+${MOTOR_PINMODES}
+  bt.println("Robot ready! Use the arrows.");
+}
+
+void loop() {
+  if (bt.available()) {
+    char c = bt.read();
+    if (c == 'F') drive(180, 180);
+    if (c == 'S') drive(0, 0);
+    // TODO: B = back, L = turn left, R = turn right
+  }
+}
+`,
+    solution: `#include <SoftwareSerial.h>
+
+SoftwareSerial bt(11, 12);   // RX, TX
+${MOTOR_SETUP}
+void setup() {
+  bt.begin(9600);
+${MOTOR_PINMODES}
+  bt.println("Robot ready! Use the arrows.");
+}
+
+void loop() {
+  if (bt.available()) {
+    char c = bt.read();
+    if (c == 'F') drive(180, 180);
+    if (c == 'B') drive(-180, -180);
+    if (c == 'L') drive(-140, 140);
+    if (c == 'R') drive(140, -140);
+    if (c == 'S') drive(0, 0);
+  }
+}
+`,
+    goals: [
+      { text: 'Drive forward from the phone (▲)', check: (c, m) => seen(m, 'x', btLog(c).filter(l => l.me).pop()?.text === 'F' && (robotOf(c)?.state.travelled ?? 0) >= 10) },
+      { text: 'Turn left or right from the phone (◀ ▶)', check: (c, m) => seen(m, 'x', ['L', 'R'].includes(btLog(c).filter(l => l.me).pop()?.text ?? '') && robotTrack(c, m).turned >= 1.4) },
+      { text: 'Stop it with ■', check: (c, m) => { if ((robotOf(c)?.state.travelled ?? 0) > 5) m.moved = true; return seen(m, 'x', !!m.moved && btLog(c).filter(l => l.me).pop()?.text === 'S' && robotStopped(c)); } },
+    ],
+  },
+  {
+    id: 'odometry',
+    title: 'Robot: Measure with Encoders',
+    icon: 'encoders',
+    level: 'Robotics',
+    intro: `
+<p>How far has the robot gone? Timing with <code>delay()</code> is only a guess: batteries run down and floors are slippery. <strong>Wheel encoders</strong> measure it properly.</p>
+<p>A disc with 20 slots turns with each wheel. A light gate sees each slot pass, giving one pulse per slot: one wheel turn is 20 pulses, about 20 cm, so <strong>one pulse ≈ 1 cm</strong>.</p>
+<p>Pulses come fast, so count them with an <strong>interrupt</strong> (you met these in <em>Interrupts</em>). Then drive <em>exactly</em> 50 cm.</p>
+<p><strong>Challenge:</strong> drive 50 cm, turn around using pulses too (half a turn is about 21 pulses on each wheel), and come back to the start.</p>`,
+    parts: [boardOn('odometry'), { type: 'robot', x: 0, z: 30, pins: ROBOT_PINS }, { type: 'encoders', x: 0, z: 0, pins: { l: 2, r: 3 }, props: { mount: 'odometry-1', mdx: 0, mdz: -6.5 } }],
+    code: `${MOTOR_SETUP}
+volatile long leftPulses = 0, rightPulses = 0;
+const float CM_PER_PULSE = 1.005;   // 20 slots on a 20.1 cm wheel
+
+void countLeft() { leftPulses++; }
+void countRight() { rightPulses++; }
+
+void setup() {
+  Serial.begin(9600);
+${MOTOR_PINMODES}
+  attachInterrupt(digitalPinToInterrupt(2), countLeft, RISING);
+  attachInterrupt(digitalPinToInterrupt(3), countRight, RISING);
+}
+
+void loop() {
+  Serial.println(leftPulses);
+  drive(150, 150);   // TODO: stop when leftPulses * CM_PER_PULSE reaches 50
+  delay(50);
+}
+`,
+    solution: `${MOTOR_SETUP}
+volatile long leftPulses = 0, rightPulses = 0;
+const float CM_PER_PULSE = 1.005;   // 20 slots on a 20.1 cm wheel
+int stage = 0;          // 0 out, 1 turn, 2 back, 3 done
+long markL = 0, markR = 0;
+
+void countLeft() { leftPulses++; }
+void countRight() { rightPulses++; }
+
+/** Centimetres the left wheel has rolled since the last mark. */
+float rolled() { return (leftPulses - markL) * CM_PER_PULSE; }
+
+void nextStage() {
+  drive(0, 0);
+  delay(600);
+  markL = leftPulses;
+  markR = rightPulses;
+  stage++;
+}
+
+void setup() {
+  Serial.begin(9600);
+${MOTOR_PINMODES}
+  attachInterrupt(digitalPinToInterrupt(2), countLeft, RISING);
+  attachInterrupt(digitalPinToInterrupt(3), countRight, RISING);
+}
+
+void loop() {
+  Serial.println(leftPulses);
+  if (stage == 0) { drive(150, 150); if (rolled() >= 50) nextStage(); }
+  else if (stage == 1) { drive(-150, 150); if (rightPulses - markR >= 21) nextStage(); }
+  else if (stage == 2) { drive(150, 150); if (rolled() >= 50) nextStage(); }
+  else drive(0, 0);
+  delay(5);
+}
+`,
+    goals: [
+      { text: 'Count pulses: watch the number climb in the Serial Monitor', check: c => serialLines(c.serial).filter(l => /^\d+$/.test(l) && +l > 5).length >= 3 },
+      { text: 'Stop after exactly 50 cm (within 3 cm)', check: (c, m) => { const t = robotOf(c)?.state.travelled ?? 0; return seen(m, 'x', robotStopped(c) && t >= 47 && t <= 53); } },
+      { text: 'Challenge: go 50 cm, turn around and come back to the start', check: (c, m) => { const t = robotTrack(c, m); return seen(m, 'x', robotStopped(c) && t.travelled >= 90 && t.fromHome < 6); } },
+    ],
+  },
+  {
+    id: 'light-seeker',
+    title: 'Robot: Light Seeker',
+    icon: 'lighteyes',
+    level: 'Robotics',
+    intro: `
+<p>Some robots (and moths!) follow light. This robot has <strong>two light sensors angled apart</strong>, like eyes: the one facing the beacon reads higher.</p>
+<pre>right eye brighter → the light is to the right: turn right
+left eye brighter  → turn left
+about the same     → it's straight ahead: go!</pre>
+<p>When both readings are high, the robot has arrived: stop. <strong>Drag the beacon</strong> somewhere new and run it again.</p>`,
+    parts: [boardOn('light-seeker'), { type: 'robot', x: -22, z: 22, pins: ROBOT_PINS }, { type: 'lighteyes', x: 0, z: 0, pins: { l: 14, r: 15 }, props: { mount: 'light-seeker-1', mdx: 0, mdz: -7.6 } }, { type: 'beacon', x: 18, z: -18 }],
+    code: `${MOTOR_SETUP}
+const int LEFT_EYE = A0, RIGHT_EYE = A1;
+
+void setup() {
+  Serial.begin(9600);
+${MOTOR_PINMODES}
+}
+
+void loop() {
+  int left = analogRead(LEFT_EYE);
+  int right = analogRead(RIGHT_EYE);
+  Serial.print(left);
+  Serial.print(" ");
+  Serial.println(right);
+
+  drive(160, 160);   // TODO: steer toward the brighter side, stop when both are bright
+  delay(20);
+}
+`,
+    solution: `${MOTOR_SETUP}
+const int LEFT_EYE = A0, RIGHT_EYE = A1;
+
+void setup() {
+  Serial.begin(9600);
+${MOTOR_PINMODES}
+}
+
+void loop() {
+  int left = analogRead(LEFT_EYE);
+  int right = analogRead(RIGHT_EYE);
+  Serial.print(left);
+  Serial.print(" ");
+  Serial.println(right);
+
+  if ((left + right) / 2 > 650) drive(0, 0);   // bright on both sides: we're there
+  else if (right > left + 40) drive(150, 40);  // light is to the right
+  else if (left > right + 40) drive(40, 150);  // light is to the left
+  else drive(160, 160);                        // straight ahead
+  delay(20);
+}
+`,
+    goals: [
+      { text: 'Read both eyes in the Serial Monitor', check: c => serialLines(c.serial).some(l => /^\d+\s+\d+$/.test(l)) },
+      { text: 'Steer to the beacon: get within 35 cm', check: (c, m) => { const r = robotOf(c), b = c.part('beacon'); return seen(m, 'x', !!r?.state.pose && !!b && Math.hypot(r.state.pose.x - b.x, r.state.pose.z - b.z) < 35); } },
+      { text: 'Stop at the beacon without touching it', check: (c, m) => { const r = robotOf(c), b = c.part('beacon'); const close = !!r?.state.pose && !!b && Math.hypot(r.state.pose.x - b.x, r.state.pose.z - b.z) < 35; return seen(m, 'x', close && robotStopped(c) && (r!.state.bumps ?? 0) === 0 && heldFor(c, m, 'still', true) > 800); } },
+    ],
+  },
+  {
+    id: 'patrol',
+    title: 'Robot: Line Patrol',
+    icon: 'irprox',
+    level: 'Robotics',
+    intro: `
+<p>Combine two senses. The robot follows the line like in <em>Line Follower</em>, but a block sits on the track. An <strong>IR obstacle sensor</strong> at the front reads <code>LOW</code> when something is within about 10 cm.</p>
+<p>A real delivery robot works like this: follow the route, and <strong>stop and wait</strong> when something is in the way.</p>
+<p><strong>Challenge:</strong> once it has stopped, drag the block off the track. The robot should carry on by itself.</p>`,
+    parts: [
+      boardOn('patrol'),
+      { type: 'robot', x: -4, z: 29, rot: 1, pins: ROBOT_PINS },
+      { type: 'track', x: 0, z: 18 },
+      { type: 'linesensor', x: 0, z: 0, pins: { l: 2, r: 3 }, props: { mount: 'patrol-1', mdx: 0, mdz: -8 } },
+      { type: 'irprox', x: 0, z: 0, pins: { out: 4 }, props: { mount: 'patrol-1', mdx: 3.5, mdz: -6.5 } },
+      { type: 'wall', x: -2, z: 7, rot: 1, props: { len: '10', color: '#e2533b' } },
+    ],
+    code: `${MOTOR_SETUP}
+const int LEFT_EYE = 2, RIGHT_EYE = 3, OBSTACLE = 4;
+int lastTurn = 1;
+
+void setup() {
+  Serial.begin(9600);
+${MOTOR_PINMODES}
+  pinMode(LEFT_EYE, INPUT);
+  pinMode(RIGHT_EYE, INPUT);
+  pinMode(OBSTACLE, INPUT);
+}
+
+void loop() {
+  bool blocked = digitalRead(OBSTACLE) == LOW;
+  Serial.println(blocked ? "BLOCKED" : "CLEAR");
+  // TODO: if blocked, stop and wait (drive(0, 0) and return)
+
+  bool left = digitalRead(LEFT_EYE);
+  bool right = digitalRead(RIGHT_EYE);
+${LINE_FOLLOW_LOOP}
+  delay(5);
+}
+`,
+    solution: `${MOTOR_SETUP}
+const int LEFT_EYE = 2, RIGHT_EYE = 3, OBSTACLE = 4;
+int lastTurn = 1;
+
+void setup() {
+  Serial.begin(9600);
+${MOTOR_PINMODES}
+  pinMode(LEFT_EYE, INPUT);
+  pinMode(RIGHT_EYE, INPUT);
+  pinMode(OBSTACLE, INPUT);
+}
+
+void loop() {
+  bool blocked = digitalRead(OBSTACLE) == LOW;
+  Serial.println(blocked ? "BLOCKED" : "CLEAR");
+  if (blocked) {
+    drive(0, 0);   // something in the way: wait here
+    delay(50);
+    return;
+  }
+
+  bool left = digitalRead(LEFT_EYE);
+  bool right = digitalRead(RIGHT_EYE);
+${LINE_FOLLOW_LOOP}
+  delay(5);
+}
+`,
+    goals: [
+      { text: 'See CLEAR / BLOCKED in the Serial Monitor', check: c => /CLEAR|BLOCKED/.test(c.serial) },
+      { text: 'Follow the line and stop before the block, without touching it', check: (c, m) => { const r = robotOf(c); const ok = !!r?.state.pose && !!c.part('irprox')?.state.near && robotStopped(c) && (r.state.bumps ?? 0) === 0 && (r.state.travelled ?? 0) > 30; if (ok && heldFor(c, m, 'wait', true) > 1200) m.stopped = r!.state.travelled; else if (!ok) heldFor(c, m, 'wait', false); return seen(m, 'x', m.stopped != null); } },
+      { text: 'Challenge: drag the block away and the robot carries on', check: (c, m) => { const r = robotOf(c); if (r?.state.pose && c.part('irprox')?.state.near && robotStopped(c)) m.at = r.state.travelled; return seen(m, 'x', m.at != null && !c.part('wall') && (r?.state.travelled ?? 0) > m.at + 15); } },
+    ],
+  },
+);
+
 const ORDER = [
   'blink', 'circuit', 'breadboard', 'fade', 'chaser', 'rgb', 'serial',
   'seg7', 'scoreboard', 'lcd', 'oled', 'matrix', 'neopixel',
   'button', 'millis', 'interrupts', 'pot', 'encoder', 'joystick', 'remote', 'nightlight', 'sound', 'morse', 'clap', 'distance',
   'servo', 'stepper', 'motor', 'relay',
   'bug-pinmode', 'bug-wiring', 'bug-button', 'bug-array', 'bug-compare',
-  'robot-drive', 'line-follow', 'avoider', 'arm-pick',
+  'robot-drive', 'bumper-bot', 'phone-robot', 'odometry', 'line-follow', 'patrol', 'avoider', 'light-seeker', 'arm-pick',
   'thermo', 'weather', 'plant', 'smoke', 'motion', 'lock', 'parking', 'phone', 'logger',
 ];
 LESSONS.sort((a, b) => ORDER.indexOf(a.id) - ORDER.indexOf(b.id));
