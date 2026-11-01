@@ -3,6 +3,22 @@
 export interface Question { q: string; a: string[]; correct: number; why: string }
 
 export const QUIZZES: Record<string, Question[]> = {
+  'robot-drive': [
+    { q: 'Why does the robot need a motor driver?', a: ['A board pin can’t supply enough current for a motor', 'Motors only understand Bluetooth', 'It makes the code shorter'], correct: 0, why: 'Pins give a few milliamps; motors need far more. The driver switches the battery power on the board’s command.' },
+    { q: 'How does a 2-wheel robot turn on the spot?', a: ['One wheel forward, the other backward', 'Both wheels forward faster', 'It can’t turn'], correct: 0, why: 'Spinning the wheels in opposite directions rotates it around its middle.' },
+  ],
+  'line-follow': [
+    { q: 'Only the left eye sees the line. Which way should the robot turn?', a: ['Left', 'Right', 'Stop'], correct: 0, why: 'The line has curved under the left eye, so steer left to get back over it.' },
+    { q: 'Why remember which way the robot last turned?', a: ['So it can search the right way when it loses the line', 'To save battery', 'The sensor needs it'], correct: 0, why: 'If both eyes lose the line on a bend, it almost certainly went off the side you were turning toward.' },
+  ],
+  avoider: [
+    { q: 'What does pulseIn() measure for the ultrasonic sensor?', a: ['How long the echo takes to come back', 'The colour of the wall', 'The robot’s speed'], correct: 0, why: 'Sound travels about 1 cm every 29 µs, there and back: microseconds ÷ 58 gives centimetres.' },
+    { q: 'Why back up before turning away from a wall?', a: ['To make room so the robot doesn’t clip the wall while turning', 'Backing up is faster', 'The sensor only works in reverse'], correct: 0, why: 'A turning robot sweeps a circle; a little space first keeps its corners clear.' },
+  ],
+  'arm-pick': [
+    { q: 'Why put delay() between arm moves?', a: ['Servos take time to reach a new angle', 'The board would reset', 'Servos only work every second'], correct: 0, why: 'write() only sets the target. The servo needs a moment to swing there before the next step.' },
+    { q: 'What does the base servo do?', a: ['Turns the whole arm left and right', 'Opens the claw', 'Bends the elbow'], correct: 0, why: 'The base rotates the arm around, so base 180 points it somewhere else entirely.' },
+  ],
   remote: [
     { q: 'How does a TV remote send a button press?', a: ['A fast pattern of invisible infrared flashes', 'Radio waves like Wi-Fi', 'A tiny sound'], correct: 0, why: 'Each button blinks its own pattern of infrared light; the receiver turns it back into a code number.' },
     { q: 'Why call IrReceiver.resume() after reading a code?', a: ['So the receiver is ready for the next button', 'To turn the LED off', 'It sends the code back'], correct: 0, why: 'decode() holds on to one code until you resume(); then it can catch the next one.' },

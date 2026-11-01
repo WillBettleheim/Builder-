@@ -33,7 +33,7 @@ export interface Lesson {
   title: string;
   icon: string; // part type used for the thumbnail
   iconProps?: Record<string, any>;
-  level: 'Basics' | 'Displays' | 'Sensors' | 'Motion' | 'Debug' | 'Projects';
+  level: 'Basics' | 'Displays' | 'Sensors' | 'Motion' | 'Debug' | 'Robotics' | 'Projects';
   intro: string;
   parts: PartSpec[];
   code: string;
@@ -2764,12 +2764,333 @@ void loop() {
   },
 );
 
+// ---------- robotics: a robot car and a robot arm ----------
+const ROBOT_PINS = { ena: 5, in1: 7, in2: 8, in3: 9, in4: 10, enb: 6 };
+/** The board rides on the robot's deck (the robot is part #1 of the lesson). */
+const boardOn = (lessonId: string, mdz = 0): PartSpec => ({ type: 'uno', x: 0, z: 0, props: { mount: `${lessonId}-1`, mdx: 0, mdz } });
+const robotOf = (c: GoalCtx) => c.part('robot');
+/** Total turning (radians, any direction) and the robot's distance from where it started. */
+function robotTrack(c: GoalCtx, m: Record<string, any>) {
+  const r = robotOf(c);
+  const pose = r?.state.pose;
+  if (!r || !pose) return { turned: m.turned ?? 0, fromHome: 0, travelled: 0 };
+  if (m.lastA != null) m.turned = (m.turned ?? 0) + Math.abs(pose.a - m.lastA);
+  m.lastA = pose.a;
+  return { turned: m.turned ?? 0, fromHome: Math.hypot(pose.x - r.x, pose.z - r.z), travelled: r.state.travelled ?? 0 };
+}
+const MOTOR_SETUP = `const int ENA = 5, IN1 = 7, IN2 = 8;   // left motor
+const int ENB = 6, IN3 = 9, IN4 = 10;  // right motor
+
+/** Drive each wheel: -255 (full reverse) to 255 (full forward). */
+void drive(int left, int right) {
+  digitalWrite(IN1, left > 0);
+  digitalWrite(IN2, left < 0);
+  analogWrite(ENA, abs(left));
+  digitalWrite(IN3, right > 0);
+  digitalWrite(IN4, right < 0);
+  analogWrite(ENB, abs(right));
+}
+`;
+const MOTOR_PINMODES = `  pinMode(ENA, OUTPUT); pinMode(IN1, OUTPUT); pinMode(IN2, OUTPUT);
+  pinMode(ENB, OUTPUT); pinMode(IN3, OUTPUT); pinMode(IN4, OUTPUT);`;
+
+LESSONS.push(
+  {
+    id: 'robot-drive',
+    title: 'Robot: First Drive',
+    icon: 'robot',
+    level: 'Robotics',
+    intro: `
+<p>Meet your <strong>robot car</strong>. Each wheel has its own motor, and the <strong>L298N motor driver</strong> on the back powers them. The board can’t power a motor directly; it just tells the driver what to do:</p>
+<pre>IN1 HIGH, IN2 LOW   → left wheel forward
+IN1 LOW,  IN2 HIGH  → left wheel backward
+both LOW            → stop
+analogWrite(ENA, 0–255) → how fast</pre>
+<p>The right wheel works the same with IN3, IN4 and ENB. The board is mounted on the robot’s deck, so it rides along.</p>
+<p><strong>Steering:</strong> spin the wheels in opposite directions and the robot turns on the spot. <strong>Challenge:</strong> drive a square and end up back where you started.</p>`,
+    parts: [boardOn('robot-drive'), { type: 'robot', x: 0, z: 10, pins: ROBOT_PINS }],
+    code: `${MOTOR_SETUP}
+void setup() {
+${MOTOR_PINMODES}
+}
+
+void loop() {
+  drive(200, 200);   // forward
+  delay(1000);
+  drive(0, 0);       // stop
+  delay(2000);
+
+  // TODO: turn on the spot with drive(-200, 200), then drive a square
+}
+`,
+    solution: `${MOTOR_SETUP}
+void setup() {
+${MOTOR_PINMODES}
+}
+
+void loop() {
+  for (int side = 0; side < 4; side++) {
+    drive(200, 200);    // one side of the square
+    delay(1000);
+    drive(-200, 200);   // a quarter turn to the left
+    delay(618);
+  }
+  drive(0, 0);
+  delay(3000);
+}
+`,
+    goals: [
+      { text: 'Drive forward at least 15 cm', check: (c, m) => seen(m, 'x', robotTrack(c, m).travelled >= 15) },
+      { text: 'Turn the robot at least a quarter turn', check: (c, m) => seen(m, 'x', robotTrack(c, m).turned >= Math.PI / 2 - 0.1) },
+      { text: 'Challenge: drive a square and stop near the start', check: (c, m) => { const t = robotTrack(c, m); return seen(m, 'x', t.travelled >= 60 && t.turned >= 1.4 * Math.PI && t.fromHome < 8); } },
+    ],
+  },
+  {
+    id: 'line-follow',
+    title: 'Robot: Line Follower',
+    icon: 'linesensor',
+    level: 'Robotics',
+    intro: `
+<p>A <strong>line follower</strong> is the classic first robot. Two infrared eyes at the front look down at the mat: each reads <code>HIGH</code> over the black line and <code>LOW</code> over white.</p>
+<pre>both eyes on the line → go straight
+only the LEFT eye     → the line curves left: turn left
+only the RIGHT eye    → turn right
+neither               → lost! keep turning the way you last turned</pre>
+<p>The starter drives straight and prints what the eyes see. Run it and watch it leave the track at the first bend. Then teach it to steer.</p>`,
+    parts: [
+      boardOn('line-follow'),
+      { type: 'robot', x: -4, z: 29, rot: 1, pins: ROBOT_PINS },
+      { type: 'track', x: 0, z: 18 },
+      { type: 'linesensor', x: 0, z: 0, pins: { l: 2, r: 3 }, props: { mount: 'line-follow-1', mdx: 0, mdz: -8 } },
+    ],
+    code: `${MOTOR_SETUP}
+const int LEFT_EYE = 2, RIGHT_EYE = 3;
+
+void setup() {
+  Serial.begin(9600);
+${MOTOR_PINMODES}
+  pinMode(LEFT_EYE, INPUT);
+  pinMode(RIGHT_EYE, INPUT);
+}
+
+void loop() {
+  bool left = digitalRead(LEFT_EYE);
+  bool right = digitalRead(RIGHT_EYE);
+  Serial.print(left ? "LINE " : "white ");
+  Serial.println(right ? "LINE" : "white");
+
+  drive(150, 150);   // TODO: steer using left and right
+  delay(20);
+}
+`,
+    solution: `${MOTOR_SETUP}
+const int LEFT_EYE = 2, RIGHT_EYE = 3;
+int lastTurn = 1;   // 1 = left, -1 = right
+
+void setup() {
+  Serial.begin(9600);
+${MOTOR_PINMODES}
+  pinMode(LEFT_EYE, INPUT);
+  pinMode(RIGHT_EYE, INPUT);
+}
+
+void loop() {
+  bool left = digitalRead(LEFT_EYE);
+  bool right = digitalRead(RIGHT_EYE);
+  Serial.print(left ? "LINE " : "white ");
+  Serial.println(right ? "LINE" : "white");
+
+  if (left && right) {
+    drive(150, 150);          // on the line: straight on
+  } else if (left) {
+    drive(0, 150);            // line is to the left
+    lastTurn = 1;
+  } else if (right) {
+    drive(150, 0);            // line is to the right
+    lastTurn = -1;
+  } else if (lastTurn == 1) {
+    drive(-60, 140);          // lost it: search the way we last turned
+  } else {
+    drive(140, -60);
+  }
+  delay(5);
+}
+`,
+    goals: [
+      { text: 'Read both eyes: LINE / white in the Serial Monitor', check: c => /(LINE|white)\s+(LINE|white)/.test(c.serial) },
+      { text: 'Follow the line for 10 seconds without losing it', check: (c, m) => { const eyes = c.part('linesensor')?.state.eyes; const r = robotOf(c); if (!r?.state.pose) return !!m.x; const lost = !eyes?.[0] && !eyes?.[1]; if (lost) m.lostAt ??= c.board.time; else m.lostAt = null; if (m.lostAt != null && c.board.time - m.lostAt > 1500) m.failedAt = c.board.time; return seen(m, 'x', c.board.time - (m.failedAt ?? 0) >= 10000 && (r.state.travelled ?? 0) > 40); } },
+      { text: 'Challenge: drive a whole lap', check: (c, m) => { const r = robotOf(c), t = c.part('track'); const pose = r?.state.pose; if (!pose || !t) return !!m.x; const ang = Math.atan2(pose.z - t.z, pose.x - t.x); if (m.last != null) { let d = ang - m.last; if (d > Math.PI) d -= 2 * Math.PI; if (d < -Math.PI) d += 2 * Math.PI; m.sum = (m.sum ?? 0) + d; } m.last = ang; return seen(m, 'x', Math.abs(m.sum ?? 0) >= 2 * Math.PI); } },
+    ],
+  },
+  {
+    id: 'avoider',
+    title: 'Robot: Obstacle Avoider',
+    icon: 'ultrasonic',
+    level: 'Robotics',
+    intro: `
+<p>Give your robot eyes that measure distance. The <strong>ultrasonic sensor</strong> on the front pings and times the echo (you met it in <em>Measure Distance</em>).</p>
+<p>The plan: drive forward, and whenever a wall is closer than about 15 cm, back up a little and turn away. That simple rule lets a robot wander a room without crashing.</p>
+<p><strong>Build it yourself:</strong> the walls are blocks on the snap grid. Drag them around (or add more from the tray in Sandbox) to make a maze.</p>`,
+    parts: [
+      boardOn('avoider'),
+      { type: 'robot', x: 0, z: 8, pins: ROBOT_PINS },
+      { type: 'ultrasonic', x: 0, z: 0, rot: 2, pins: { trig: 11, echo: 12 }, props: { mount: 'avoider-1', mdx: 0, mdz: -7.6 } },
+      ...[-20, 0, 20].flatMap(x => [{ type: 'wall', x, z: -23, props: { len: '20' } }, { type: 'wall', x, z: 39, props: { len: '20' } }]),
+      ...[-12, 8, 28].flatMap(z => [{ type: 'wall', x: -31, z, rot: 1, props: { len: '20', color: '#3b82c4' } }, { type: 'wall', x: 31, z, rot: 1, props: { len: '20', color: '#3b82c4' } }]),
+    ],
+    code: `${MOTOR_SETUP}
+const int TRIG = 11, ECHO = 12;
+
+long distanceCm() {
+  digitalWrite(TRIG, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG, LOW);
+  long us = pulseIn(ECHO, HIGH, 30000);
+  return us / 58;
+}
+
+void setup() {
+  Serial.begin(9600);
+${MOTOR_PINMODES}
+  pinMode(TRIG, OUTPUT);
+  pinMode(ECHO, INPUT);
+}
+
+void loop() {
+  long d = distanceCm();
+  Serial.println(d);
+  drive(170, 170);   // TODO: if d is under 15 cm, back up and turn away
+  delay(30);
+}
+`,
+    solution: `${MOTOR_SETUP}
+const int TRIG = 11, ECHO = 12;
+
+long distanceCm() {
+  digitalWrite(TRIG, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG, LOW);
+  long us = pulseIn(ECHO, HIGH, 30000);
+  return us / 58;
+}
+
+void setup() {
+  Serial.begin(9600);
+${MOTOR_PINMODES}
+  pinMode(TRIG, OUTPUT);
+  pinMode(ECHO, INPUT);
+}
+
+void loop() {
+  long d = distanceCm();
+  Serial.println(d);
+  if (d > 0 && d < 15) {
+    drive(-150, -150);   // back up a little
+    delay(300);
+    drive(150, -150);    // turn right, about 90°
+    delay(800);
+  } else {
+    drive(170, 170);
+  }
+  delay(30);
+}
+`,
+    goals: [
+      { text: 'See the distance ahead in the Serial Monitor', check: c => serialLines(c.serial).filter(l => /^\d+$/.test(l)).length >= 3 },
+      { text: 'Drive for 20 seconds without touching a wall', check: (c, m) => { const r = robotOf(c); return seen(m, 'x', !!r?.state.pose && c.board.time >= 20000 && (r.state.bumps ?? 0) === 0 && (r.state.travelled ?? 0) >= 40); } },
+      { text: 'Turn away from 3 walls', check: (c, m) => { const d = c.part('ultrasonic')?.state.distance ?? 999; const r = robotOf(c); if (!r?.state.pose) return !!m.x; if (d < 15 && !m.near) { m.near = true; m.n = (m.n ?? 0) + 1; } if (d > 25) m.near = false; return seen(m, 'x', (m.n ?? 0) >= 3 && (r.state.bumps ?? 0) === 0); } },
+    ],
+  },
+  {
+    id: 'arm-pick',
+    title: 'Robot Arm: Pick and Place',
+    icon: 'arm',
+    level: 'Robotics',
+    intro: `
+<p>Factories use <strong>robot arms</strong> to move things. This one has four servos, each a joint you control with <code>write(angle)</code>:</p>
+<pre>base      turns the whole arm   (90 = facing forward)
+shoulder  leans the arm         (90 = straight up)
+elbow     bends the forearm     (90 = straight)
+claw      under 40 grips, over 70 opens</pre>
+<p><strong>Your job:</strong> pick up the red cube and drop it on the pad. Reaching the cube takes <code>shoulder 30</code> and <code>elbow 10</code>; the pad is at <code>base 180</code>.</p>
+<p>Move one joint at a time with a <code>delay()</code> between, so the arm has time to get there.</p>`,
+    parts: [
+      { type: 'uno', x: 0, z: 0 },
+      { type: 'arm', x: 14, z: 4, pins: { base: 3, shoulder: 5, elbow: 6, claw: 9 } },
+      { type: 'cube', x: 14, z: 16.75 },
+      { type: 'pad', x: 26.4, z: 4.3 },
+    ],
+    code: `#include <Servo.h>
+
+Servo base, shoulder, elbow, claw;
+
+void setup() {
+  base.attach(3);
+  shoulder.attach(5);
+  elbow.attach(6);
+  claw.attach(9);
+
+  claw.write(90);       // open the claw
+  delay(500);
+  shoulder.write(30);   // reach down to the cube
+  elbow.write(10);
+  delay(1000);
+
+  // TODO: close the claw, lift, turn to the pad (base 180), lower, open
+}
+
+void loop() {}
+`,
+    solution: `#include <Servo.h>
+
+Servo base, shoulder, elbow, claw;
+
+void moveArm(int b, int s, int e) {
+  base.write(b);
+  shoulder.write(s);
+  elbow.write(e);
+  delay(900);
+}
+
+void setup() {
+  base.attach(3);
+  shoulder.attach(5);
+  elbow.attach(6);
+  claw.attach(9);
+
+  claw.write(90);          // open
+  moveArm(90, 30, 10);     // reach down to the cube
+  claw.write(20);          // grip
+  delay(500);
+  moveArm(90, 90, 90);     // lift
+  moveArm(180, 90, 90);    // turn to the pad
+  moveArm(180, 30, 10);    // lower
+  claw.write(90);          // let go
+  delay(500);
+  moveArm(90, 90, 90);     // home
+}
+
+void loop() {}
+`,
+    goals: [
+      { text: 'Move every joint', check: (c, m) => { const st = c.part('arm')?.state ?? {}; for (const k of ['base', 'shoulder', 'elbow', 'claw']) if (Math.abs((st[k] ?? 90) - 90) > 20) m[k] = true; return seen(m, 'x', ['base', 'shoulder', 'elbow', 'claw'].every(k => m[k])); } },
+      { text: 'Pick up the cube', check: (c, m) => seen(m, 'x', !!c.part('arm')?.state.holding) },
+      { text: 'Place the cube on the pad', check: (c, m) => { const cb = c.part('cube'), pd = c.part('pad'); return seen(m, 'x', !!cb && !!pd && !cb.state.heldBy && Math.abs(cb.x - pd.x) < 3 && Math.abs(cb.z - pd.z) < 3 && (cb.group?.position.y ?? 1) < 0.05); } },
+    ],
+  },
+);
+
 const ORDER = [
   'blink', 'circuit', 'breadboard', 'fade', 'chaser', 'rgb', 'serial',
   'seg7', 'scoreboard', 'lcd', 'oled', 'matrix', 'neopixel',
   'button', 'millis', 'interrupts', 'pot', 'encoder', 'joystick', 'remote', 'nightlight', 'sound', 'morse', 'clap', 'distance',
   'servo', 'stepper', 'motor', 'relay',
   'bug-pinmode', 'bug-wiring', 'bug-button', 'bug-array', 'bug-compare',
+  'robot-drive', 'line-follow', 'avoider', 'arm-pick',
   'thermo', 'weather', 'plant', 'smoke', 'motion', 'lock', 'parking', 'phone', 'logger',
 ];
 LESSONS.sort((a, b) => ORDER.indexOf(a.id) - ORDER.indexOf(b.id));
