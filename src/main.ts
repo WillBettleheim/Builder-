@@ -42,6 +42,8 @@ interface Saved {
   quiz: Record<string, Record<number, { tries: number; ok: boolean }>>;
   stats: { wires: number };
   instructor: boolean;
+  /** grid size parts snap to, in cm (0 = fine 0.25 cm steps) */
+  snap?: number;
   /** the class this learner joined from a teacher's invite link */
   classroom?: { code: string; name: string; teacher: string; student: string } | null;
 }
@@ -324,6 +326,7 @@ world.onFrame = dt => {
   if (running && gen && interp) {
     const b = world.board;
     const speed = parseFloat(speedSel.value);
+    world.timeScale = paused ? 0 : speed;
     b.target = Math.min(b.target, b.time) + dt * 1000 * speed;
     interp.resetBudget();
     world.timeScale = paused ? 0 : speed;
