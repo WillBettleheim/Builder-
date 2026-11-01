@@ -2790,12 +2790,257 @@ const pad: PartDef = {
   },
 };
 
+// ---------- more robot sensors: bumper, IR obstacle, wheel encoders, light eyes and a beacon ----------
+/** Distance to the nearest obstacle straight ahead of a point on a part (local frame), or Infinity. */
+function lookAhead(g: THREE.Object3D, ctx: UpdateCtx, from: [number, number, number], dirZ: number, far: number): number {
+  const origin = new THREE.Vector3(...from).applyMatrix4(g.matrixWorld);
+  const dir = new THREE.Vector3(0, 0, dirZ).transformDirection(g.matrixWorld);
+  const hit = new THREE.Raycaster(origin, dir, 0, far).intersectObjects(ctx.obstacles.filter(o => o !== g), true)[0];
+  return hit ? hit.distance : Infinity;
+}
+/** The robot (or other host) a part is mounted on. */
+const hostPart = (part: Part, ctx: UpdateCtx) => (part.props.mount ? ctx.parts.find(p => p.id === part.props.mount) : undefined);
+
+const bumper: PartDef = {
+  type: 'bumper',
+  name: 'Bumper Switch',
+  blurb: 'A micro switch with a long lever. Mount it at the front of a robot: the lever clicks when the robot touches a wall. Wire it to GND and use INPUT_PULLUP: it reads LOW when pressed. You can also click the lever.',
+  terminals: () => [
+    { key: 'sig', label: 'Signal (NO)', kind: 'signal', pos: [-0.35, 0.62, 0.7] },
+    { key: 'gnd', label: 'GND (COM)', kind: 'GND', pos: [0.35, 0.62, 0.7] },
+  ],
+  build() {
+    const g = new THREE.Group();
+    g.add(at(box(2.0, 0.12, 1.8, mat('#1b1c20'), 0.04), 0, 0.5, 0.2));
+    for (const x of [-0.35, 0.35]) g.add(at(cyl(0.035, 0.035, 0.3, M.gold, 6), x, 0.66, 0.7));
+    g.add(at(box(1.4, 0.65, 0.7, mat('#26272c'), 0.06), 0, 0.88, -0.2));
+    g.add(at(box(0.25, 0.18, 0.25, mat('#e2533b'), 0.03), 0.3, 1.25, -0.2)); // the plunger
+    const lever = new THREE.Group();
+    lever.position.set(-0.55, 1.05, -0.45);
+    const arm = at(box(0.12, 0.05, 2.0, M.metal, 0.01), 0.55, 0, -0.9);
+    arm.userData.action = 'press';
+    lever.add(arm);
+    const roller = cyl(0.22, 0.22, 0.25, mat('#30323a'), 14);
+    roller.rotation.z = Math.PI / 2;
+    roller.position.set(0.55, -0.05, -1.9);
+    roller.userData.action = 'press';
+    lever.add(roller);
+    g.add(lever);
+    g.userData.lever = lever;
+    return g;
+  },
+  update(part, board, ctx) {
+    // the lever reaches 2 cm out front: anything closer presses it
+    // and a robot carrying it that runs into anything while driving forward squashes it too
+    const host = hostPart(part, ctx);
+    const crashed = !!host && host.state.bumpFwd && board.time - (host.state.bumpAt ?? -1e9) < 120;
+    part.state.touching = crashed || lookAhead(part.group!, ctx, [0, 1.05, -0.4], -1, 2.6) < 2.1;
+    const pressed = part.state.touching || part.state.pressed;
+    if (pressed && !part.state.wasDown) ctx.audio.click();
+    part.state.wasDown = pressed;
+    part.group!.userData.lever.rotation.y = pressed ? 0.12 : 0;
+  },
+  listener(part) {
+    return {
+      readDigital(pin, board) {
+        if (pin !== part.pins.sig) return undefined;
+        if (part.state.touching || part.state.pressed) return 0;
+        if (board.pins[pin].mode !== 'INPUT_PULLUP') board.hint('bumperpull', 'The bumper switch connects the pin to GND, so use pinMode(pin, INPUT_PULLUP). Without the pull-up the pin floats.');
+        return undefined;
+      },
+    };
+  },
+  readout: part => `Lever: <b>${part.state.touching || part.state.pressed ? 'pressed' : 'free'}</b>`,
+};
+
+const irProx: PartDef = {
+  type: 'irprox',
+  name: 'IR Obstacle Sensor',
+  blurb: 'An infrared LED and receiver that notice anything close in front (adjust the range with its knob). OUT reads LOW when something is there, and its green light comes on. Faces the way its LEDs point.',
+  defaults: { range: '10' },
+  props: [{ key: 'range', label: 'Range (trimmer)', type: 'select', options: [{ value: '5', label: '5 cm' }, { value: '10', label: '10 cm' }, { value: '20', label: '20 cm' }] }],
+  terminals: () => [
+    { key: 'vcc', label: 'VCC', kind: '5V', pos: [row(3, 0, 0.42), 0.62, 0.95] },
+    { key: 'gnd', label: 'GND', kind: 'GND', pos: [row(3, 1, 0.42), 0.62, 0.95] },
+    { key: 'out', label: 'OUT', kind: 'signal', pos: [row(3, 2, 0.42), 0.62, 0.95] },
+  ],
+  build() {
+    const g = new THREE.Group();
+    g.add(at(box(1.5, 0.12, 3.0, mat('#1d4fa0'), 0.04), 0, 0.5, 0));
+    for (let i = 0; i < 3; i++) g.add(at(cyl(0.035, 0.035, 0.3, M.gold, 6), row(3, i, 0.42), 0.66, 0.95));
+    g.add(at(box(0.6, 0.35, 0.6, mat('#2f62c9'), 0.04), 0.2, 0.72, 0.2)); // range trimmer
+    g.add(at(cyl(0.12, 0.12, 0.1, mat('#e9e6df'), 10), 0.2, 0.92, 0.2));
+    for (const [x, c] of [[-0.35, '#dfe7ef'], [0.35, '#141418']] as const) {
+      const e = cyl(0.2, 0.2, 0.8, mat(c, { roughness: 0.2 }), 14);
+      e.rotation.x = Math.PI / 2;
+      e.position.set(x, 0.75, -1.4);
+      g.add(e);
+    }
+    const led = makeLed('#34c759');
+    led.group.scale.setScalar(0.35);
+    led.group.position.set(-0.45, 0.56, 0.3);
+    g.add(led.group);
+    g.userData.led = led;
+    return g;
+  },
+  update(part, _board, ctx) {
+    part.state.near = lookAhead(part.group!, ctx, [0, 0.75, -1.8], -1, 40) < (Number(part.props.range) || 10);
+    setLed(part.group!.userData.led, ctx.running && part.state.near ? 0.9 : 0);
+  },
+  listener(part) {
+    return { readDigital(pin) { return pin === part.pins.out ? (part.state.near ? 0 : 1) : undefined; } };
+  },
+  readout: part => `Something in front: <b>${part.state.near ? 'yes (OUT = LOW)' : 'no (OUT = HIGH)'}</b>`,
+};
+
+export const CM_PER_TICK = (2 * Math.PI * 3.2) / 20; // 20-slot encoder discs on 3.2 cm wheels
+const encoders: PartDef = {
+  type: 'encoders',
+  name: 'Wheel Encoders (pair)',
+  blurb: 'Slotted discs on both wheels with light gates. Each output gives one pulse for every 1/20 of a wheel turn (about 1 cm). Mount it on a robot and count pulses with attachInterrupt() on pins 2 and 3.',
+  terminals: () => [
+    { key: 'vcc', label: 'VCC', kind: '5V', pos: [row(4, 0, 0.42), 0.62, 0.55] },
+    { key: 'gnd', label: 'GND', kind: 'GND', pos: [row(4, 1, 0.42), 0.62, 0.55] },
+    { key: 'l', label: 'Left pulses', kind: 'signal', pos: [row(4, 2, 0.42), 0.62, 0.55] },
+    { key: 'r', label: 'Right pulses', kind: 'signal', pos: [row(4, 3, 0.42), 0.62, 0.55] },
+  ],
+  build() {
+    const g = new THREE.Group();
+    g.add(at(box(2.4, 0.12, 1.6, mat('#1b1c20'), 0.04), 0, 0.5, 0));
+    for (let i = 0; i < 4; i++) g.add(at(cyl(0.035, 0.035, 0.3, M.gold, 6), row(4, i, 0.42), 0.66, 0.55));
+    const leds: ReturnType<typeof makeLed>[] = [];
+    for (const x of [-0.75, 0.75]) {
+      // a U-shaped light gate
+      for (const dz of [-0.35, 0.05]) g.add(at(box(0.45, 0.6, 0.18, M.black, 0.03), x, 0.86, dz - 0.15));
+      const led = makeLed('#ff3b30');
+      led.group.scale.setScalar(0.3);
+      led.group.position.set(x, 0.56, 0.35);
+      g.add(led.group);
+      leds.push(led);
+    }
+    g.userData.leds = leds;
+    return g;
+  },
+  update(part, _board, ctx) {
+    const host = hostPart(part, ctx);
+    part.state.host = host?.state.distL != null ? host : null;
+    const [l, r] = part.group!.userData.leds;
+    setLed(l, ctx.running && part.state.levL ? 0.8 : 0);
+    setLed(r, ctx.running && part.state.levR ? 0.8 : 0);
+  },
+  listener(part) {
+    /** Half-pulses so far on one wheel (slot, gap, slot…), at this exact moment of sketch time. */
+    const halves = (side: 'L' | 'R', board: Board) => {
+      const h = part.state.host;
+      if (!h) return 0;
+      const v = Math.abs(side === 'L' ? h.state.vl ?? 0 : h.state.vr ?? 0);
+      const dist = (h.state[`dist${side}`] ?? 0) + (v * Math.max(0, board.time - (h.state.odoAt ?? board.time))) / 1000;
+      let n = Math.floor(dist / (CM_PER_TICK / 2));
+      const k = `half${side}`;
+      if (n < (part.state[k] ?? 0) - 4) part.state[k] = n; // a new run started from zero
+      n = Math.max(n, part.state[k] ?? 0); // never count backwards
+      part.state[k] = n;
+      part.state[`ticks${side}`] = Math.floor(n / 2);
+      return n;
+    };
+    return {
+      readDigital(pin, board) {
+        // each slot gives one whole pulse: HIGH across the slot, LOW across the bar
+        if (pin === part.pins.l) { const lv = halves('L', board) % 2; part.state.levL = lv; return lv; }
+        if (pin === part.pins.r) { const lv = halves('R', board) % 2; part.state.levR = lv; return lv; }
+        return undefined;
+      },
+    };
+  },
+  readout: part => (part.state.host ? `Pulses: left <b>${part.state.ticksL ?? 0}</b>, right <b>${part.state.ticksR ?? 0}</b>` : 'Mount it on a robot to measure its wheels'),
+};
+
+const EYE_ANGLE = 0.55; // each eye looks about 30° out to its side
+const lightEyes: PartDef = {
+  type: 'lighteyes',
+  name: 'Light Seeker Eyes',
+  blurb: 'Two light sensors on a bracket, angled left and right. analogRead() is higher on the side that faces a light, so a robot can steer toward a beacon.',
+  terminals: () => [
+    { key: 'vcc', label: 'VCC', kind: '5V', pos: [row(4, 0, 0.42), 0.62, 0.75] },
+    { key: 'gnd', label: 'GND', kind: 'GND', pos: [row(4, 1, 0.42), 0.62, 0.75] },
+    { key: 'l', label: 'Left eye', kind: 'signal', analog: true, pos: [row(4, 2, 0.42), 0.62, 0.75] },
+    { key: 'r', label: 'Right eye', kind: 'signal', analog: true, pos: [row(4, 3, 0.42), 0.62, 0.75] },
+  ],
+  build() {
+    const g = new THREE.Group();
+    g.add(at(box(4.0, 0.12, 1.8, mat('#1b1c20'), 0.04), 0, 0.5, 0));
+    for (let i = 0; i < 4; i++) g.add(at(cyl(0.035, 0.035, 0.3, M.gold, 6), row(4, i, 0.42), 0.66, 0.75));
+    for (const side of [-1, 1]) {
+      const head = new THREE.Group();
+      head.position.set(side * 1.4, 0.95, -0.4);
+      head.rotation.y = -side * EYE_ANGLE; // left eye turns left, right eye turns right
+      head.add(at(box(0.9, 0.7, 0.4, mat('#2a2c33'), 0.06), 0, 0, 0));
+      const cell = cyl(0.3, 0.3, 0.12, mat('#d9a441', { roughness: 0.3 }), 18);
+      cell.rotation.x = Math.PI / 2;
+      cell.position.z = -0.22;
+      head.add(cell);
+      g.add(head);
+    }
+    return g;
+  },
+  update(part, _board, ctx) {
+    const g = part.group!;
+    const beacons = ctx.parts.filter(p => p.type === 'beacon' && p.group);
+    part.state.levels = [-1, 1].map(side => {
+      const pos = g.localToWorld(new THREE.Vector3(side * 1.4, 0.95, -0.6));
+      const look = new THREE.Vector3(side * Math.sin(EYE_ANGLE), 0, -Math.cos(EYE_ANGLE)).transformDirection(g.matrixWorld);
+      let v = 40; // a dim room
+      for (const b of beacons) {
+        const to = b.group!.position.clone().setY(pos.y).sub(pos);
+        const d = to.length();
+        const facing = Math.max(0, look.dot(to.normalize()));
+        v += 1350 * Math.exp(-d / 60) * facing * facing;
+      }
+      return Math.min(1023, Math.round(v));
+    });
+  },
+  listener(part) {
+    return {
+      readAnalog(pin) {
+        if (pin === part.pins.l) return part.state.levels?.[0];
+        if (pin === part.pins.r) return part.state.levels?.[1];
+        return undefined;
+      },
+    };
+  },
+  readout: part => `Left eye ≈ <b>${part.state.levels?.[0] ?? 0}</b> · Right eye ≈ <b>${part.state.levels?.[1] ?? 0}</b>`,
+};
+
+const beacon: PartDef = {
+  type: 'beacon',
+  name: 'Light Beacon',
+  blurb: 'A bright lamp on a stand for light-seeking robots. Drag it around the desk.',
+  noPins: true,
+  defaults: { color: '#ffd34d' },
+  props: [{ key: 'color', label: 'Light', type: 'select', options: [{ value: '#ffd34d', label: 'Warm' }, { value: '#7fd3ff', label: 'Cool' }, { value: '#ff6b6b', label: 'Red' }] }],
+  terminals: () => [],
+  build(part) {
+    const g = new THREE.Group();
+    const c = part.props.color ?? '#ffd34d';
+    g.add(at(cyl(2.0, 2.3, 0.6, mat('#2a2c33'), 32), 0, 0.3, 0));
+    g.add(at(cyl(0.25, 0.25, 6, M.metal, 12), 0, 3.3, 0));
+    const bulb = new THREE.Mesh(new THREE.SphereGeometry(1.2, 24, 16), new THREE.MeshStandardMaterial({ color: c, emissive: new THREE.Color(c), emissiveIntensity: 3 }));
+    bulb.position.y = 6.9;
+    g.add(bulb);
+    const glow = glowSprite(c, 9);
+    (glow.material as THREE.SpriteMaterial).opacity = 0.75;
+    glow.position.y = 6.9;
+    g.add(glow);
+    return g;
+  },
+};
+
 export const PARTS: Record<string, PartDef> = Object.fromEntries(
-  [uno, led, rgbLed, button, pot, ldr, tmp36, buzzer, ultrasonic, servo, motor, trafficLight, car, lcd, sevenSeg, pir, joystick, neopixel, bigBreadboard, relay, dht11, oled, stepper, keypad, soil, encoder, matrix, hall, magnet, sound, gas, irRemote, bluetooth, digits, sdcard, robotCar, trackMat, lineSensor, wall, robotArm, cube, pad].map(d => [d.type, d]),
+  [uno, led, rgbLed, button, pot, ldr, tmp36, buzzer, ultrasonic, servo, motor, trafficLight, car, lcd, sevenSeg, pir, joystick, neopixel, bigBreadboard, relay, dht11, oled, stepper, keypad, soil, encoder, matrix, hall, magnet, sound, gas, irRemote, bluetooth, digits, sdcard, robotCar, trackMat, lineSensor, wall, robotArm, cube, pad, bumper, irProx, encoders, lightEyes, beacon].map(d => [d.type, d]),
 );
 
 /** Parts shown in the sandbox palette, in order. */
-export const PALETTE = ['breadboard', 'led', 'rgb', 'button', 'keypad', 'pot', 'encoder', 'joystick', 'ldr', 'temp', 'dht', 'soil', 'gas', 'sound', 'hall', 'pir', 'buzzer', 'ultrasonic', 'servo', 'stepper', 'motor', 'relay', 'traffic', 'seg7', 'digits', 'lcd', 'oled', 'matrix', 'neopixel', 'ir', 'bluetooth', 'sdcard', 'robot', 'linesensor', 'arm', 'cube', 'track', 'pad', 'wall', 'magnet', 'car'];
+export const PALETTE = ['breadboard', 'led', 'rgb', 'button', 'keypad', 'pot', 'encoder', 'joystick', 'ldr', 'temp', 'dht', 'soil', 'gas', 'sound', 'hall', 'pir', 'buzzer', 'ultrasonic', 'servo', 'stepper', 'motor', 'relay', 'traffic', 'seg7', 'digits', 'lcd', 'oled', 'matrix', 'neopixel', 'ir', 'bluetooth', 'sdcard', 'robot', 'linesensor', 'irprox', 'bumper', 'encoders', 'lighteyes', 'beacon', 'arm', 'cube', 'track', 'pad', 'wall', 'magnet', 'car'];
 
 let idCounter = 0;
 export function newPart(type: string, init: Partial<Part> = {}): Part {

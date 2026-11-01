@@ -45,6 +45,11 @@ const SHOPPING: Record<string, { item: string; extras?: string[] }> = {
   wall: { item: 'Building blocks or cardboard for walls' },
   cube: { item: 'Small foam or wooden cube (2 cm)' },
   pad: { item: 'Paper target square' },
+  bumper: { item: 'Micro limit switch with roller lever (KW12)' },
+  irprox: { item: 'FC-51 IR obstacle avoidance sensor module' },
+  encoders: { item: '2× LM393 speed sensor modules with 20-slot encoder discs' },
+  lighteyes: { item: '2× LDR light sensor modules', extras: ['Small bracket to angle them apart'] },
+  beacon: { item: 'Torch or small desk lamp' },
 };
 
 const COLOR_NAMES: Record<string, string> = {
