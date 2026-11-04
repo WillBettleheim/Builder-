@@ -58,6 +58,19 @@ export class World {
   /** simulation speed (0 while paused), so robots drive in step with the sketch */
   timeScale = 1;
   private wasRunning = false;
+  /** drawing is skipped until this time unless the sketch runs: a still scene costs no GPU at all */
+  private renderUntil = 0;
+  private shadowDirty = true;
+  private frameNo = 0;
+  private settleUntil = 0;
+  private wireCache = new Map<string, { key: string; obj: THREE.Object3D }>();
+  private hitsDirty = true;
+  private hitsAt = 0;
+  private pendingMove: PointerEvent | null = null;
+  /** real frame time while drawing, and the callback when it stays too slow */
+  private slowMs = 16;
+  private slowAt = 0;
+  onSlow: () => void = () => {};
   private grid: THREE.GridHelper | null = null;
   private ghost: THREE.Mesh;
 
@@ -103,6 +116,7 @@ export class World {
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.autoUpdate = false; // redone only when something moved: see draw()
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.0;
@@ -119,8 +133,9 @@ export class World {
     this.composer.addPass(new RenderPass(this.scene, this.camera));
     // soft contact shadows where parts meet the mat and each other
     this.ao = new GTAOPass(this.scene, this.camera, 256, 256);
-    this.ao.updateGtaoMaterial({ radius: 1.4, distanceExponent: 1.4, thickness: 1.5, scale: 1.1, samples: 12 });
+    this.ao.updateGtaoMaterial({ radius: 1.4, distanceExponent: 1.4, thickness: 1.5, scale: 1.1, samples: 8 });
     this.ao.blendIntensity = 0.85;
+    halfResolution(this.ao); // contact shadows are soft anyway: half the pixels look the same
     this.composer.addPass(this.ao);
     // a soft glowing edge around the part under the pointer and the selected part
     this.outline = new OutlinePass(new THREE.Vector2(256, 256), this.scene, this.camera);
@@ -131,6 +146,7 @@ export class World {
     this.outline.hiddenEdgeColor.set('#0f4a46');
     this.composer.addPass(this.outline);
     this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.6, 0.4, 2.2);
+    halfResolution(this.bloom); // a glow is blurry by nature, so half resolution looks the same
     this.composer.addPass(this.bloom);
     this.composer.addPass(new OutputPass());
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
@@ -159,7 +175,7 @@ export class World {
     rim.position.set(30, 20, -30);
     this.scene.add(rim);
     // a fixed pool, so the shader never recompiles as LEDs switch on and off
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 4; i++) {
       const l = new THREE.PointLight('#ffffff', 0, 9, 2);
       this.spill.push(l);
       this.scene.add(l);
@@ -205,9 +221,14 @@ export class World {
 
     const el = this.renderer.domElement;
     el.addEventListener('pointerdown', e => this.pointerDown(e));
-    el.addEventListener('pointermove', e => this.pointerMove(e));
+    // handle at most one move per frame: pointers can fire far faster than the screen updates
+    el.addEventListener('pointermove', e => { this.pendingMove = e; });
     el.addEventListener('pointerleave', () => { this.setHover(null); this.hoverPart = null; });
-    window.addEventListener('pointerup', e => this.pointerUp(e));
+    window.addEventListener('pointerup', e => { this.flushMove(); this.pointerUp(e); this.shadowDirty = true; });
+    // anything the person does may change the picture, so wake the renderer up
+    for (const type of ['pointerdown', 'pointermove', 'wheel', 'keydown', 'click']) window.addEventListener(type, () => this.kick(), { passive: true, capture: true });
+    for (const type of ['input', 'change']) window.addEventListener(type, () => { this.kick(); this.shadowDirty = true; }, { passive: true, capture: true });
+    document.addEventListener('visibilitychange', () => this.kick());
     el.addEventListener('wheel', e => this.wheel(e), { passive: false });
     const ro = new ResizeObserver(() => this.resize());
     ro.observe(host);
@@ -217,10 +238,10 @@ export class World {
   }
 
   /** Trade looks for speed: high has every effect, low suits phones and older laptops. */
-  setQuality(q: 'high' | 'balanced' | 'low') {
+  setQuality(q: 'high' | 'balanced' | 'low', maxPixelRatio = 2) {
     this.quality = q;
     const dpr = window.devicePixelRatio;
-    this.renderer.setPixelRatio(q === 'high' ? Math.min(dpr, 2) : q === 'balanced' ? Math.min(dpr, 1.5) : 1);
+    this.renderer.setPixelRatio(q === 'high' ? Math.min(dpr, maxPixelRatio) : q === 'balanced' ? Math.min(dpr, 1.5) : 1);
     this.ao.enabled = q === 'high';
     this.outline.enabled = q !== 'low';
     this.lampLight.visible = q !== 'low';
@@ -233,6 +254,8 @@ export class World {
     }
     for (const l of this.spill) l.visible = q !== 'low';
     this.resize();
+    this.shadowDirty = true;
+    this.kick(1000);
   }
 
   setTheme(name: 'light' | 'dark') {
@@ -246,6 +269,7 @@ export class World {
     this.matMat.map?.dispose();
     this.matMat.map = matTexture(t);
     this.matMat.needsUpdate = true;
+    this.kick(1000);
   }
 
   /** Glide to a standard angle: the friendly 3/4 view, straight down, from the front or from the side. */
@@ -272,9 +296,11 @@ export class World {
       this.controls.target.copy(center);
       this.camera.position.copy(to);
       this.controls.update();
+      this.kick();
       return;
     }
     this.glide = { from: this.camera.position.clone(), to, fromT: this.controls.target.clone(), toT: center, t: 0 };
+    this.kick(1200);
   }
 
   private stepGlide(dt: number) {
@@ -314,6 +340,7 @@ export class World {
     else this.camera.clearViewOffset();
     this.camera.aspect = (w - inset) / h;
     this.camera.updateProjectionMatrix();
+    this.kick();
   }
 
   // ---------- parts ----------
@@ -323,6 +350,7 @@ export class World {
     this.parts.push(part);
     this.buildPart(part);
     this.syncListeners();
+    this.kick(1000);
   }
 
   removePart(part: Part) {
@@ -335,6 +363,8 @@ export class World {
     if (this.selected === part) this.select(null);
     this.syncListeners();
     this.solveCircuit(false);
+    this.shadowDirty = true;
+    this.hitsDirty = true;
     this.onChange();
   }
 
@@ -350,6 +380,9 @@ export class World {
     this.select(null);
     this.syncListeners();
     this.wiresDirty = true;
+    this.hitsDirty = true;
+    this.shadowDirty = true;
+    this.kick(1000);
   }
 
   /** (Re)create a part's 3D model, e.g. after a prop like color changed. */
@@ -366,7 +399,10 @@ export class World {
     this.placeGroup(part);
     this.scene.add(g);
     this.wiresDirty = true;
+    this.hitsDirty = true;
+    this.shadowDirty = true;
     this.collectGlows();
+    this.kick(1000);
   }
 
   private collectGlows() {
@@ -395,6 +431,17 @@ export class World {
       l.intensity = x.o * 6 * Math.max(1, x.s.scale.x / 2.4) ** 2;
       l.distance = 6 + x.s.scale.x * 2.5;
     });
+  }
+
+  /** Keep drawing for a moment: the picture may be changing. */
+  kick(ms = 500) {
+    this.renderUntil = Math.max(this.renderUntil, performance.now() + ms);
+  }
+
+  private flushMove() {
+    const e = this.pendingMove;
+    this.pendingMove = null;
+    if (e) this.pointerMove(e);
   }
 
   /** Where a part is right now: its spot on the desk, or where it has driven to while running. */
@@ -431,6 +478,8 @@ export class World {
     part.rot = (part.rot + 1) % 4;
     this.placeGroup(part);
     this.wiresDirty = true;
+    this.hitsDirty = true;
+    this.shadowDirty = true;
     this.onChange();
   }
 
@@ -487,6 +536,7 @@ export class World {
     part.props.mdz = Math.round((ox * s + oz * c) / g) * g;
     this.placeGroup(part);
     this.wiresDirty = true;
+    this.hitsDirty = true;
   }
 
   unmount(part: Part) {
@@ -516,6 +566,9 @@ export class World {
     if (this.running !== this.wasRunning) {
       this.wasRunning = this.running;
       if (this.running) for (const p of this.parts) if (PARTS[p.type].drive) { delete p.state.pose; p.state.travelled = 0; p.state.bumps = 0; p.state.distL = 0; p.state.distR = 0; }
+      this.wiresDirty = true; // robots may have jumped back to their start
+      this.hitsDirty = true;
+      this.shadowDirty = true;
     }
     for (const p of this.parts) {
       const def = PARTS[p.type];
@@ -548,6 +601,49 @@ export class World {
         p.state.distR = (p.state.distR ?? 0) + Math.abs(sp.right) * h;
       }
       p.state.pose = pose;
+    }
+  }
+
+  /** Draw only when the picture can have changed, and redo shadows only when things moved. */
+  private draw() {
+    const now = performance.now();
+    if (this.running !== this.wasDrawnRunning) {
+      this.wasDrawnRunning = this.running;
+      this.settleUntil = now + 1200; // servos and fans finish gliding after a stop
+      this.kick(1200);
+    }
+    // the camera still easing to a stop counts as a change, but not movement too small to see
+    const cam = this.camera.position, tgt = this.controls.target;
+    if (cam.distanceToSquared(this.drawnCam) > 1e-4 || tgt.distanceToSquared(this.drawnTarget) > 1e-4) {
+      this.drawnCam.copy(cam);
+      this.drawnTarget.copy(tgt);
+      this.kick(200);
+    }
+    const live = this.running || now < this.settleUntil;
+    if (!live && now > this.renderUntil && !this.drag && !this.wiring) { this.lastDraw = 0; return; }
+    this.frameNo++;
+    // while a sketch runs, moving parts' shadows can update at a third of the frame rate
+    const shadows = this.shadowDirty || (live && this.frameNo % 3 === 0);
+    if (shadows) { this.renderer.shadowMap.needsUpdate = true; this.shadowDirty = false; }
+    this.composer.render();
+    this.watchSpeed(now);
+  }
+
+  private drawnCam = new THREE.Vector3();
+  private drawnTarget = new THREE.Vector3();
+  private wasDrawnRunning = false;
+  private lastDraw = 0;
+
+  /** If drawing stays slow for a couple of seconds, say so (auto quality then steps down). */
+  private watchSpeed(now: number) {
+    const gap = this.lastDraw ? now - this.lastDraw : 0;
+    this.lastDraw = now;
+    if (!gap || gap > 250 || document.hidden) return; // the first frame, or a hidden or throttled page
+    this.slowMs += (gap - this.slowMs) * 0.05;
+    if (this.slowMs > 30 && now - this.slowAt > 2500) {
+      this.slowAt = now;
+      this.slowMs = 16;
+      this.onSlow();
     }
   }
 
@@ -621,6 +717,8 @@ export class World {
     part.z = spot.z;
     this.placeGroup(part);
     this.wiresDirty = true;
+    this.hitsDirty = true;
+    this.shadowDirty = true;
   }
 
   /** Board listeners; a part missing power or ground behaves as if it isn't there. */
@@ -646,6 +744,7 @@ export class World {
   }
 
   select(part: Part | null) {
+    this.kick();
     this.selected = part;
     this.selectedWire = null;
     this.onSelect();
@@ -691,6 +790,7 @@ export class World {
     const before = new Set(this.issues.map(i => i.key));
     this.issues = solve(this.parts, this.wires);
     this.wiresDirty = true;
+    this.kick();
     if (notify) this.onWiresChanged(this.issues.filter(i => !before.has(i.key)));
     this.onChange();
   }
@@ -707,22 +807,18 @@ export class World {
     return t ? new THREE.Vector3(...t.pos).applyMatrix4(part.group.matrixWorld) : null;
   }
 
+  /** Redraw only the wires whose ends or look changed; the rest keep their geometry. */
   private rebuildWires() {
-    for (const g of [this.wireGroup, this.hitGroup]) {
-      for (const c of [...g.children]) {
-        g.remove(c);
-        // plug geometry is shared; only the per-wire tubes and materials are freed
-        c.traverse(o => {
-          const m = o as THREE.Mesh;
-          if (m.geometry && m.geometry !== plugGeo) m.geometry.dispose();
-          if (m.material && m.material !== plugMat && g === this.wireGroup) (m.material as THREE.Material).dispose();
-        });
-      }
-    }
     for (const p of this.parts) p.group?.updateMatrixWorld(true);
+    const keep = new Set<string>();
     for (const w of this.wires) {
       const a = this.endpointPos(w.a), b = this.endpointPos(w.b);
       if (!a || !b) continue;
+      keep.add(w.id);
+      const key = [a.x, a.y, a.z, b.x, b.y, b.z].map(n => n.toFixed(3)).join() + w.color + (w === this.selectedWire) + this.view.wiresOnTop;
+      const old = this.wireCache.get(w.id);
+      if (old?.key === key) continue;
+      if (old) this.dropWire(old.obj);
       const jumper = jumperWire(a, b, w.color, w === this.selectedWire);
       jumper.traverse(o => {
         o.userData.wireId = w.id;
@@ -731,20 +827,35 @@ export class World {
         if (m && this.view.wiresOnTop) { m.depthTest = false; o.renderOrder = 12; }
       });
       this.wireGroup.add(jumper);
+      this.wireCache.set(w.id, { key, obj: jumper });
     }
+    for (const [id, c] of this.wireCache) if (!keep.has(id)) { this.dropWire(c.obj); this.wireCache.delete(id); }
     plugMat.depthTest = !this.view.wiresOnTop;
-    // invisible hit targets for every terminal
-    const hitMat = new THREE.MeshBasicMaterial({ visible: false });
-    const hitGeo = new THREE.SphereGeometry(0.26, 8, 6);
-    const holeGeo = new THREE.SphereGeometry(0.17, 6, 4); // breadboard holes are packed tight
+    if (!this.running) this.shadowDirty = true;
+    this.kick();
+  }
+
+  private dropWire(obj: THREE.Object3D) {
+    this.wireGroup.remove(obj);
+    // plug geometry is shared; only the per-wire tubes and materials are freed
+    obj.traverse(o => {
+      const m = o as THREE.Mesh;
+      if (m.geometry && m.geometry !== plugGeo) m.geometry.dispose();
+      if (m.material && m.material !== plugMat) (m.material as THREE.Material).dispose();
+    });
+  }
+
+  /** Invisible click targets for every terminal. */
+  private rebuildHits() {
+    for (const p of this.parts) p.group?.updateMatrixWorld(true);
+    this.hitGroup.clear();
     for (const part of this.parts) {
       if (!part.group) continue;
       const terms = part.type === 'uno' ? BOARD_TERMINALS.map(t => ({ key: t.key, small: false })) : PARTS[part.type].terminals(part).map(t => ({ key: t.key, small: t.kind === 'pass' }));
       for (const { key, small } of terms) {
         const ep = endpoint(part.id, key);
-        const pos = this.endpointPos(ep)!;
-        const s = new THREE.Mesh(small ? holeGeo : hitGeo, hitMat);
-        s.position.copy(pos);
+        const s = new THREE.Mesh(small ? HOLE_GEO : HIT_GEO, HIT_MAT);
+        s.position.copy(this.endpointPos(ep)!);
         s.userData.ep = ep;
         this.hitGroup.add(s);
       }
@@ -1013,6 +1124,7 @@ export class World {
         if (f.mount) Object.assign(d.part.props, { mount: f.mount, mdx: f.mdx, mdz: f.mdz });
         this.placeGroup(d.part);
         this.wiresDirty = true;
+        this.hitsDirty = true;
         this.audio.sfx('unsnap');
       } else this.audio.sfx('place');
     }
@@ -1033,18 +1145,27 @@ export class World {
   // ---------- frame loop ----------
   private frame() {
     const dt = Math.min(0.25, this.clock.getDelta()); // keep sim time real even when frames drop
+    this.flushMove();
     this.onFrame(dt);
     if (this.wiresDirty) {
       this.wiresDirty = false;
       this.rebuildWires();
       if (this.hoverEp) this.setHover(this.hoverEp);
     }
+    // clicking targets only need to catch up once things have stopped moving (or every so often)
+    if (this.hitsDirty && !this.drag && performance.now() - this.hitsAt > 200) {
+      this.hitsDirty = false;
+      this.hitsAt = performance.now();
+      this.rebuildHits();
+    }
     this.driveRobots(dt * this.timeScale);
     // passengers follow their hosts (a robot driving, or a host being dragged)
-    let riding = false;
-    for (const p of this.parts) if (p.props.mount && p.group) { this.placeGroup(p); riding = true; }
-    for (const p of this.parts) if (p.state.pose && p.group) { this.placeGroup(p); riding = true; }
-    if (riding && (this.running || this.drag)) this.wiresDirty = true;
+    const moved = this.parts.some(p => PARTS[p.type].drive && (p.state.vl || p.state.vr));
+    if (moved || this.drag || this.running) {
+      for (const p of this.parts) if ((p.props.mount || p.state.pose) && p.group) this.placeGroup(p);
+    }
+    if (moved || this.drag?.moved) { this.wiresDirty = true; this.hitsDirty = true; }
+    if (this.drag?.moved) this.shadowDirty = true; // a driving robot's shadow updates in draw(), at a lower rate
     const obstacles = this.parts.filter(p => PARTS[p.type].obstacle && p.group).map(p => p.group!);
     for (const p of this.parts) {
       const powered = !p.state.missing?.length;
@@ -1052,9 +1173,8 @@ export class World {
     }
     const sel = this.selected;
     if (sel?.group) {
-      const box = new THREE.Box3().setFromObject(sel.group);
-      const size = box.getSize(new THREE.Vector3());
-      const r = Math.max(size.x, size.z) * 0.62 + 0.4;
+      const f = sel.group.userData.foot;
+      const r = Math.max(f.maxX - f.minX, f.maxZ - f.minZ) * 0.62 + 0.4;
       this.selRing.scale.setScalar(r);
       this.selRing.position.set(sel.x, 0.03, sel.z);
       this.selRing.visible = true;
@@ -1070,10 +1190,18 @@ export class World {
     this.updateSpill();
     const outlined = [this.selected, this.hoverPart, this.highlight].filter((p): p is Part => !!p?.group).map(p => p.group!);
     this.outline.selectedObjects = [...new Set(outlined)];
+    this.outline.enabled = this.quality !== 'low' && outlined.length > 0; // nothing to outline: skip the pass
+    if (this.glide) this.kick();
     this.stepGlide(dt);
     this.controls.update();
-    this.composer.render();
+    this.draw();
   }
+}
+
+/** Make a post-processing pass work at half the composer's resolution. */
+function halfResolution(pass: { setSize(w: number, h: number): void }) {
+  const setSize = pass.setSize.bind(pass);
+  pass.setSize = (w, h) => setSize(Math.max(1, Math.floor(w / 2)), Math.max(1, Math.floor(h / 2)));
 }
 
 /** The part's footprint in its own frame, from its solid meshes (glows and labels don't count). */
@@ -1092,6 +1220,11 @@ function localFootprint(g: THREE.Group): { minX: number; maxX: number; minZ: num
   if (box.isEmpty()) return { minX: -1, maxX: 1, minZ: -1, maxZ: 1 };
   return { minX: box.min.x, maxX: box.max.x, minZ: box.min.z, maxZ: box.max.z };
 }
+
+// shared by every click target, so scenes with packed breadboards stay cheap
+const HIT_MAT = new THREE.MeshBasicMaterial({ visible: false });
+const HIT_GEO = new THREE.SphereGeometry(0.26, 8, 6);
+const HOLE_GEO = new THREE.SphereGeometry(0.17, 6, 4);
 
 const TAG_COLORS: Record<string, string> = {
   high: '#ff4d3d', low: '#3a3f47', pwm: '#ff9f1c', 'in-high': '#3b82f6', 'in-low': '#1f3f73', analog: '#16a79a',
