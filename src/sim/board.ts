@@ -313,6 +313,7 @@ export class Board implements Host {
 
   tone(pin: number, freq: number, durationMs: number | null) {
     this.checkPin(pin, 0, 'tone');
+    this.pins[pin].mode = 'OUTPUT'; // tone() sets the pin to output, like the real core
     this.tones.set(pin, { freq, until: durationMs != null ? this.time + durationMs : null });
     this.toneFreqs.add(Math.round(freq));
     this.record(pin, 1);

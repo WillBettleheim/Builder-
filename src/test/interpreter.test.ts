@@ -33,6 +33,11 @@ describe('arithmetic and types', () => {
     expect(board.level(4)).toBe(0);
   });
 
+  it('makes a pin an output when tone() plays on it', () => {
+    const { board } = runSketch('void setup() { tone(8, 440); }\nvoid loop() {}', 50);
+    expect(board.pins[8].mode).toBe('OUTPUT');
+  });
+
   it('prints chars as letters', () => {
     expect(out("char c = 'A'; c++; Serial.println(c);")).toEqual(['B']);
   });
