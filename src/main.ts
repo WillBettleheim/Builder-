@@ -1941,9 +1941,19 @@ const QUALITY_NOTES = {
   balanced: 'Glow and light spill, without contact shadows. Smoother on most laptops.',
   low: 'Simplest look, for phones and older computers.',
 };
+/** On Auto, drop a level for this session if the frame rate stays low. */
+let autoCap: 'high' | 'balanced' | 'low' | null = null;
+world.onSlow = () => {
+  if (saved.quality !== 'auto') return;
+  const cur = world.quality;
+  if (cur === 'low') return;
+  autoCap = cur === 'high' ? 'balanced' : 'low';
+  applyQuality();
+  toast(`Graphics lowered to <b>${autoCap}</b> to keep things smooth. Change it any time in ⚙ Settings.`, 'hint', 5000);
+};
 function applyQuality() {
-  const q = saved.quality === 'auto' ? autoQuality() : saved.quality;
-  world.setQuality(q);
+  const q = saved.quality === 'auto' ? autoCap ?? autoQuality() : saved.quality;
+  world.setQuality(q, saved.quality === 'auto' ? 1.5 : 2); // Auto favours smoothness on very sharp screens
   document.querySelectorAll<HTMLButtonElement>('#quality button').forEach(b => b.setAttribute('aria-checked', String(b.dataset.q === saved.quality)));
   $('quality-note').textContent = (saved.quality === 'auto' ? `Auto picked ${q} for this device. ` : '') + QUALITY_NOTES[q];
 }
