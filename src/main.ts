@@ -327,6 +327,7 @@ function setStatus(kind: 'running' | 'stopped' | 'error', text: string) {
 world.board.onHint = text => (nova.enabled ? nova.say(esc(text), { mood: 'think' }) : toast(esc(text), 'hint', 10000));
 world.board.onSerial = text => { serialDirty = true; plotter.push(text); };
 let serialDirty = false;
+let serialAt = 0, clockAt = 0;
 
 world.onFrame = dt => {
   if (running && gen && interp) {
@@ -348,8 +349,12 @@ world.onFrame = dt => {
         stop();
       }
     }
-    clockEl.textContent = `${(b.time / 1000).toFixed(2)} s`;
-    if (running) editor.setRunLine(interp.currentLine || null);
+    // text on screen only needs to change about 15 times a second
+    if (performance.now() - clockAt > 66) {
+      clockAt = performance.now();
+      clockEl.textContent = `${(b.time / 1000).toFixed(2)} s`;
+      if (running) editor.setRunLine(interp.currentLine || null);
+    }
     checkGoals();
   }
   // the meter follows live pin changes, a few times a second like a real one
@@ -361,8 +366,9 @@ world.onFrame = dt => {
   if (plotter.visible && plotter.hasData && running) award('plotter');
   if (running && !paused) timeline.record(world.board, pinTracks());
   timeline.draw(world.board);
-  if (serialDirty) {
+  if (serialDirty && performance.now() - serialAt > 80) {
     serialDirty = false;
+    serialAt = performance.now();
     const nearBottom = serialOut.scrollHeight - serialOut.scrollTop - serialOut.clientHeight < 40;
     serialOut.textContent = world.board.serialOut.slice(-12000);
     if (nearBottom) serialOut.scrollTop = serialOut.scrollHeight;
