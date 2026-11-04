@@ -1186,7 +1186,7 @@ const pir: PartDef = {
     g.add(breadboard(2.8, 2.6));
     g.add(at(box(2.4, 0.14, 2.4, mat('#1e7a3a'), 0.04), 0, 1.0, 0.1));
     for (let i = 0; i < 3; i++) g.add(at(cyl(0.04, 0.04, 0.5, M.gold, 6), row(3, i, 0.5), 0.75, -0.9));
-    const domeMat = new THREE.MeshPhysicalMaterial({ color: '#f6f4ee', roughness: 0.55, transmission: 0.1, emissive: new THREE.Color('#ff6a4d'), emissiveIntensity: 0, flatShading: true });
+    const domeMat = new THREE.MeshPhysicalMaterial({ color: '#f6f4ee', roughness: 0.55, emissive: new THREE.Color('#ff6a4d'), emissiveIntensity: 0, flatShading: true });
     const dome = new THREE.Mesh(new THREE.SphereGeometry(1.0, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2), domeMat);
     dome.position.set(0, 1.07, 0.1);
     dome.castShadow = true;
@@ -1463,7 +1463,7 @@ const relay: PartDef = {
     lamp.add(at(cyl(1.1, 1.3, 0.4, mat('#3a3b42'), 28), 0, 0.2, 0));
     lamp.add(at(cyl(0.12, 0.12, 2.2, M.metal, 10), 0, 1.5, 0));
     lamp.add(at(cyl(0.45, 0.4, 0.6, M.metal, 20), 0, 2.85, 0));
-    const glassMat = new THREE.MeshPhysicalMaterial({ color: '#fff7e0', roughness: 0.1, transmission: 0.3, transparent: true, opacity: 0.85, emissive: new THREE.Color('#ffcf73'), emissiveIntensity: 0 });
+    const glassMat = new THREE.MeshPhysicalMaterial({ color: '#fff7e0', roughness: 0.1, transparent: true, opacity: 0.85, emissive: new THREE.Color('#ffcf73'), emissiveIntensity: 0 });
     const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.85, 28, 18), glassMat);
     bulb.position.y = 3.85;
     bulb.castShadow = true;
@@ -2482,7 +2482,7 @@ const robotCar: PartDef = {
   deck: { minX: -5.6, maxX: 5.6, minZ: -8.6, maxZ: 4.6, y: ROBOT.deckY },
   build() {
     const g = new THREE.Group();
-    const acrylic = new THREE.MeshPhysicalMaterial({ color: '#f2b705', roughness: 0.35, transmission: 0.15, thickness: 0.3, clearcoat: 0.6 });
+    const acrylic = new THREE.MeshPhysicalMaterial({ color: '#f2b705', roughness: 0.35, clearcoat: 0.6 });
     g.add(at(box(12, 0.3, 18.5, acrylic, 0.6), 0, ROBOT.deckY - 0.15, 0));
     // gear motors and wheels on each side
     const wheels: THREE.Group[] = [];
