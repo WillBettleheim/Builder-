@@ -139,6 +139,7 @@ function loadParts(parts: (SavedPart | PartSpec)[], wires?: Wire[], idPrefix?: s
     if (!PARTS[s.type]) return;
     world.addPart(newPart(s.type, { ...s, id: (s as SavedPart).id ?? (idPrefix ? `${idPrefix}-${i}` : undefined), locked: s.type === 'uno' || (s as SavedPart).locked }));
   });
+  world.settleMounted();
   lastWireCount = (wires ?? []).length;
   world.setWires(wires ?? world.parts.flatMap((p, i) => {
     const spec = parts[i] as PartSpec;
@@ -355,7 +356,7 @@ world.onFrame = dt => {
   if (!meterEl.hidden && performance.now() - meterAt > 120) { meterAt = performance.now(); updateMeter(); }
   updateSchematic();
   updatePhone();
-  if (performance.now() - boardAt > 100) { boardAt = performance.now(); if (!saved.boardHidden) boardView.update(world.parts, world.board, running); }
+  if (performance.now() - boardAt > 100) { boardAt = performance.now(); if (!saved.boardHidden) boardView.update(world.parts, world.wires, world.board, running, world.selected); if (bigBoard) { if (modal.hidden) { bigBoard = null; world.highlight = null; } else bigBoard.update(world.parts, world.wires, world.board, running, world.selected); } }
   plotter.draw();
   if (plotter.visible && plotter.hasData && running) award('plotter');
   if (running && !paused) timeline.record(world.board, pinTracks());
@@ -633,8 +634,22 @@ function renderPhone() {
 }
 
 // ---------- live board diagram ----------
-const boardView = new BoardView($('board-view'));
+const pinEvents = {
+  onPick(part: Part) { world.select(part); world.audio.sfx('press'); },
+  onHover(part: Part | null) { world.highlight = part; },
+};
+const boardView = new BoardView($('board-view'), pinEvents, $('board-summary'));
+let bigBoard: BoardView | null = null;
 let boardAt = 0;
+/** The big diagram, for reading every pin at once. */
+function openBigBoard() {
+  $('modal-card').setAttribute('aria-label', 'Live board');
+  $('modal-card').innerHTML = `<div class="bs-head"><div><div class="eyebrow">LIVE BOARD</div><h2 id="big-board-summary">Every pin, right now</h2></div><button class="mini ghost icon" data-tm="close" aria-label="Close">×</button></div>
+    <div class="bs-body"><div id="big-board" class="bv-large"></div><p class="muted">Click a pin to select the part wired to it. Numbers above 5V and GND count the wires leaving them.</p></div>`;
+  bigBoard = new BoardView($('big-board'), { ...pinEvents, onPick(part) { closeModal(); pinEvents.onPick(part); } }, $('big-board-summary'));
+  modal.hidden = false;
+}
+$('board-expand').onclick = openBigBoard;
 function renderBoardPanel() {
   const hidden = !!saved.boardHidden;
   $('board-panel').classList.toggle('collapsed', hidden);
@@ -661,12 +676,20 @@ function renderView() {
 $('view-btn').onclick = e => {
   e.stopPropagation();
   viewPop.hidden = !viewPop.hidden;
+  $('view-reset-layout').hidden = mode !== 'lessons';
   $('view-btn').setAttribute('aria-expanded', String(!viewPop.hidden));
 };
 viewPop.addEventListener('click', e => {
   const t = e.target as HTMLElement;
   const cam = t.closest<HTMLElement>('[data-cam]')?.dataset.cam;
   if (cam) world.setView(cam as 'angled' | 'top' | 'front' | 'side');
+  if (t.closest('#view-reset-layout') && mode === 'lessons' && confirm('Put every part back where the lesson starts? Your code stays as it is.')) {
+    const code = editor.value;
+    openLesson(lesson, true);
+    editor.value = code;
+    save();
+    viewPop.hidden = true;
+  }
   const labels = t.closest<HTMLElement>('[data-labels]')?.dataset.labels;
   if (labels) { saved.view!.pinLabels = labels as 'off' | 'used' | 'all'; save(); renderView(); }
 });
@@ -1444,7 +1467,7 @@ const PART_CATEGORIES: Record<string, string[]> = {
   Displays: ['seg7', 'digits', 'lcd', 'oled', 'matrix'],
   Motion: ['servo', 'stepper', 'motor', 'relay', 'buzzer'],
   Connect: ['bluetooth', 'sdcard'],
-  Robotics: ['robot', 'linesensor', 'irprox', 'bumper', 'encoders', 'lighteyes', 'beacon', 'arm', 'cube', 'track', 'pad', 'wall'],
+  Robotics: ['bolt', 'robot', 'linesensor', 'irprox', 'bumper', 'encoders', 'lighteyes', 'beacon', 'arm', 'cube', 'track', 'pad', 'wall'],
   Other: ['breadboard', 'magnet', 'car'],
 };
 const partFilter = { text: '', cat: 'All' };
@@ -1690,6 +1713,8 @@ window.addEventListener('keydown', e => {
     restoreHistory(e.shiftKey || e.key.toLowerCase() === 'y' ? 1 : -1);
     return;
   }
+  const cam = ({ 1: 'angled', 2: 'top', 3: 'front', 4: 'side' } as Record<string, 'angled' | 'top' | 'front' | 'side'>)[e.key];
+  if (cam && !e.metaKey && !e.ctrlKey) world.setView(cam);
   if (e.key === 'Escape') {
     if (world.isWiring) world.cancelWiring();
     else if (!viewPop.hidden) viewPop.hidden = true;

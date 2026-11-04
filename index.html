@@ -106,12 +106,13 @@
           </div>
           <div class="view-pop card" id="view-pop" hidden>
             <h4>Camera</h4>
-            <div class="seg" id="view-cam"><button data-cam="angled">3/4</button><button data-cam="top">Top</button><button data-cam="front">Front</button><button data-cam="side">Side</button></div>
+            <div class="seg" id="view-cam"><button data-cam="angled" title="Press 1">3/4</button><button data-cam="top" title="Press 2">Top</button><button data-cam="front" title="Press 3">Front</button><button data-cam="side" title="Press 4">Side</button></div>
             <h4>Pin labels on the board</h4>
             <div class="seg" role="radiogroup" id="view-labels"><button data-labels="off" role="radio">Off</button><button data-labels="used" role="radio">Used pins</button><button data-labels="all" role="radio">All pins</button></div>
             <label class="switch-row"><input type="checkbox" id="view-follow"> <span>Follow the robot as it drives</span></label>
             <label class="switch-row"><input type="checkbox" id="view-wires"> <span>Show wires through parts</span></label>
             <label class="switch-row"><input type="checkbox" id="view-board"> <span>Live board diagram in the side panel</span></label>
+            <button class="mini" id="view-reset-layout" style="margin-top:10px">Reset lesson layout</button>
           </div>
           <div class="help-pop card" id="help-pop" hidden>
             <h4>Controls <button class="mini" id="tour-again" style="float:right">Take the tour</button></h4>
@@ -122,6 +123,7 @@
               <li><b>Hold</b> a button cap to press it</li>
               <li><b>Drag up/down</b> on knobs and sensors to change them</li>
               <li><b>Drag</b> empty space to orbit, <b>right-drag</b> to pan, <b>scroll</b> to zoom</li>
+              <li><kbd>1</kbd>–<kbd>4</kbd> camera: 3/4, top, front, side</li>
               <li><kbd>R</kbd> rotate selected · <kbd>Del</kbd> remove (sandbox)</li>
               <li><kbd>Ctrl/⌘</kbd>+<kbd>Enter</kbd> run · <kbd>Ctrl/⌘</kbd>+<kbd>/</kbd> comment</li>
             </ul>
@@ -178,10 +180,11 @@
           <div class="panel board-panel" id="board-panel">
             <div class="panel-head">
               <span class="file-tab"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="3" width="13" height="10" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M4 3v2M6.5 3v2M9 3v2M11.5 3v2M5 13v-2M8 13v-2M11 13v-2" stroke="currentColor" stroke-width="1.2"/></svg>Live board <span class="sch-live">live</span></span>
-              <div class="ph-actions"><button id="board-collapse" class="mini ghost" aria-expanded="true" title="Hide the live board">–</button></div>
+              <span class="bv-summary" id="board-summary"></span>
+              <div class="ph-actions"><button id="board-expand" class="mini ghost" title="Open a big version">⤢</button><button id="board-collapse" class="mini ghost" aria-expanded="true" title="Hide the live board">–</button></div>
             </div>
             <div class="board-body" id="board-view"></div>
-            <div class="bv-legend"><span><i class="high"></i>HIGH</span><span><i class="low"></i>LOW</span><span><i class="pwm"></i>PWM</span><span><i class="in-high"></i>input</span><span><i class="analog"></i>analog</span><span><i class="float"></i>floating</span><span><i class="servo"></i>servo / tone</span></div>
+            <div class="bv-legend"><span><i class="high"></i>HIGH</span><span><i class="low"></i>LOW</span><span><i class="pwm"></i>PWM</span><span><i class="in-high"></i>input</span><span><i class="analog"></i>analog</span><span><i class="data"></i>data</span><span><i class="float"></i>floating</span><span><i class="servo"></i>servo / tone</span></div>
           </div>
           <div class="panel serial">
             <div class="panel-head">
