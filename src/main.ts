@@ -44,7 +44,7 @@ interface Saved {
   stats: { wires: number };
   instructor: boolean;
   /** camera and overlay options from the View menu */
-  view?: { pinLabels: 'off' | 'used' | 'all'; follow: boolean; wiresOnTop: boolean };
+  view?: { pinLabels: 'off' | 'used' | 'all'; follow: boolean; wiresOnTop: boolean; arrows?: boolean };
   /** the live board panel is folded away */
   boardHidden?: boolean;
   /** grid size parts snap to, in cm (0 = fine 0.25 cm steps) */
@@ -667,12 +667,23 @@ function renderBoardPanel() {
 $('board-collapse').onclick = () => { saved.boardHidden = !saved.boardHidden; save(); renderBoardPanel(); renderView(); };
 renderBoardPanel();
 
+// ---------- compass ----------
+const compassNeedle = document.querySelector<HTMLElement>('#compass svg')!;
+let compassAngle = NaN;
+$('compass').onclick = () => world.setView('top');
+setInterval(() => {
+  const a = Math.round(world.cameraBearing);
+  if (a !== compassAngle) { compassAngle = a; compassNeedle.style.transform = `rotate(${a}deg)`; }
+}, 100);
+
 // ---------- view menu ----------
 const viewPop = $('view-pop');
 function renderView() {
   const v = (saved.view ??= { pinLabels: 'used', follow: false, wiresOnTop: false });
   world.view.pinLabels = v.pinLabels;
   world.view.follow = v.follow;
+  world.view.arrows = v.arrows ?? true;
+  $<HTMLInputElement>('view-arrows').checked = v.arrows ?? true;
   if (world.view.wiresOnTop !== v.wiresOnTop) world.setWiresOnTop(v.wiresOnTop);
   for (const b of viewPop.querySelectorAll<HTMLButtonElement>('[data-labels]')) b.setAttribute('aria-checked', String(b.dataset.labels === v.pinLabels));
   $<HTMLInputElement>('view-follow').checked = v.follow;
@@ -702,6 +713,7 @@ viewPop.addEventListener('click', e => {
 viewPop.addEventListener('change', e => {
   const t = e.target as HTMLInputElement;
   if (t.id === 'view-follow') saved.view!.follow = t.checked;
+  if (t.id === 'view-arrows') saved.view!.arrows = t.checked;
   if (t.id === 'view-wires') saved.view!.wiresOnTop = t.checked;
   if (t.id === 'view-board') { saved.boardHidden = !t.checked; renderBoardPanel(); }
   save();
@@ -1216,10 +1228,23 @@ function renderInspector() {
   let html = `
     <div class="i-head">
       <img src="${partThumbnail(part.type, part.type === 'car' || part.type === 'led' || part.type === 'button' ? part.props : {})}" alt="">
-      <div><h3>${esc(def.name)}</h3><p>${esc(def.blurb)}</p></div>
+      <div><h3>${esc(def.name)}</h3><p class="i-blurb" title="${esc(def.blurb)}">${esc(def.blurb)}</p></div>
       <button class="mini ghost" data-act="close" aria-label="Close">×</button>
     </div>`;
 
+  html += `<div class="move-box">
+    ${part.locked ? '' : `<div class="move-pad" role="group" aria-label="Move this part">
+      <button data-nudge="up" style="grid-area:u" aria-label="Move away">▲</button>
+      <button data-nudge="left" style="grid-area:l" aria-label="Move left">◀</button>
+      <button data-nudge="right" style="grid-area:r" aria-label="Move right">▶</button>
+      <button data-nudge="down" style="grid-area:d" aria-label="Move closer">▼</button>
+    </div>`}
+    <div class="move-info">
+      <div class="move-rot"><button class="mini" data-act="rotate-left" title="Rotate left (Q)">⟲</button><button class="mini" data-act="rotate" title="Rotate right (E or R)">⟳</button></div>
+      <p data-pos></p>
+      <p class="muted">${part.locked ? 'This part stays in place.' : 'Hold to keep moving. <kbd>←↑↓→</kbd> work too, <kbd>Shift</kbd> for big steps.'}</p>
+    </div>
+  </div>`;
   if (part.type === 'uno') {
     const used: string[] = [];
     for (let pin = 0; pin < 20; pin++) {
@@ -1284,7 +1309,6 @@ function renderInspector() {
   html += `<div class="row">
     ${part.type === 'bluetooth' ? '<button class="mini primary" data-act="phone">📱 Open phone app</button>' : ''}
     ${part.type === 'sdcard' ? '<button class="mini" data-act="sd-erase">Erase card</button>' : ''}
-    <button class="mini" data-act="rotate">Rotate <kbd>R</kbd></button>
     ${canDelete ? `<button class="mini danger" data-act="delete">Remove</button>` : ''}
   </div>`;
   inspectorEl.innerHTML = html;
@@ -1321,9 +1345,37 @@ function liveReadout(part: Part): string {
 // refresh live readouts without rebuilding the inspector (keeps focus on controls)
 setInterval(() => {
   const p = world.selected;
+  if (!p || inspectorEl.hidden) return;
   const el = inspectorEl.querySelector('[data-live]');
-  if (p && el) el.innerHTML = liveReadout(p);
+  if (el) { const html = liveReadout(p); if (html !== lastReadout) { lastReadout = html; el.innerHTML = html; } }
+  const pos = inspectorEl.querySelector('[data-pos]');
+  if (pos) {
+    const face = world.facingName(p);
+    const text = `x ${p.x.toFixed(1)}, z ${p.z.toFixed(1)} cm${face ? ` · faces ${face}` : ''}`;
+    if (pos.textContent !== text) pos.textContent = text;
+  }
 }, 150);
+let lastReadout = '';
+
+// the move pad: press to step, hold to keep going
+let nudgeTimer = 0;
+function stopNudge() { clearTimeout(nudgeTimer); clearInterval(nudgeTimer); nudgeTimer = 0; }
+inspectorEl.addEventListener('pointerdown', e => {
+  const dir = (e.target as HTMLElement).closest<HTMLElement>('[data-nudge]')?.dataset.nudge as 'up' | 'down' | 'left' | 'right' | undefined;
+  const part = world.selected;
+  if (!dir || !part) return;
+  const step = () => { const p = world.selected; if (p) world.nudge(p, dir, e.shiftKey); };
+  step();
+  world.audio.sfx('press');
+  stopNudge();
+  nudgeTimer = window.setTimeout(() => { nudgeTimer = window.setInterval(step, 70); }, 320);
+});
+for (const type of ['pointerup', 'pointercancel', 'blur']) window.addEventListener(type, stopNudge);
+inspectorEl.addEventListener('click', e => {
+  // keyboard users press the pad's buttons with Enter or Space
+  const dir = (e.target as HTMLElement).closest<HTMLElement>('[data-nudge]')?.dataset.nudge as 'up' | 'down' | 'left' | 'right' | undefined;
+  if (dir && e.detail === 0 && world.selected) world.nudge(world.selected, dir);
+});
 
 /** Replace whatever a part terminal is wired to with a single wire to a board socket. */
 function quickConnect(part: Part, key: string, boardKey: string | null) {
@@ -1387,6 +1439,7 @@ inspectorEl.addEventListener('click', e => {
   const act = el.dataset.act;
   if (act === 'close') world.select(null);
   if (act === 'rotate') world.rotatePart(part);
+  if (act === 'rotate-left') world.rotatePart(part, -1);
   if (act === 'delete') world.removePart(part);
   if (act === 'phone') setPhone(true);
   if (act === 'sd-erase') { part.props.files = {}; save(); }
@@ -1734,7 +1787,10 @@ window.addEventListener('keydown', e => {
   if (wire && (e.key === 'Delete' || e.key === 'Backspace')) { world.removeWire(wire); return; }
   const sel = world.selected;
   if (!sel) return;
-  if (e.key === 'r' || e.key === 'R') world.rotatePart(sel);
+  const arrow = ({ ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' } as Record<string, 'up' | 'down' | 'left' | 'right'>)[e.key];
+  if (arrow) { e.preventDefault(); world.nudge(sel, arrow, e.shiftKey); return; }
+  if (e.key === 'r' || e.key === 'R' || e.key === 'e' || e.key === 'E') world.rotatePart(sel);
+  if (e.key === 'q' || e.key === 'Q') world.rotatePart(sel, -1);
   if ((e.key === 'Delete' || e.key === 'Backspace') && mode === 'sandbox' && !sel.locked) world.removePart(sel);
 });
 

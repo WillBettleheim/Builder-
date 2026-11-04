@@ -908,3 +908,16 @@ body.instructor-on .guide { max-height: calc(100% - 40px); }
 .bv-large .bv { max-height: none; width: 100%; }
 .bv-pin.data .bv-dot { fill: #8fa3b5; stroke: #d3dde6; }
 .bv-legend .data { background: #8fa3b5; }
+
+/* movement */
+.move-box { display: flex; gap: 12px; align-items: center; margin: 10px 0; padding: 10px; border-radius: 12px; background: var(--paper); border: 1px solid var(--line); }
+.move-pad { display: grid; grid-template-areas: '. u .' 'l . r' '. d .'; grid-template-columns: repeat(3, 30px); grid-auto-rows: 30px; gap: 3px; flex: none; }
+.move-pad button { border: 1px solid var(--line-2); border-radius: 8px; background: var(--card); color: var(--ink); font-size: 11px; cursor: pointer; touch-action: none; user-select: none; transition: background 0.1s, transform 0.06s; }
+.move-pad button:hover { background: color-mix(in srgb, var(--accent) 16%, var(--card)); }
+.move-pad button:active { transform: scale(0.92); background: var(--accent); color: #fff; }
+.move-info { min-width: 0; flex: 1; }
+.move-info p { margin: 4px 0 0; font-size: 11.5px; }
+.move-info [data-pos] { font-family: var(--mono); color: var(--ink); }
+.move-rot { display: flex; gap: 5px; }
+.move-rot .mini { font-size: 14px; padding: 2px 9px; }
+#compass svg { width: 19px; height: 19px; transition: transform 0.12s linear; }
