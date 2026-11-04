@@ -12,7 +12,7 @@ import { OutlinePass } from 'three/examples/jsm/postprocessing/OutlinePass.js';
 import { buildWorkshop, woodTexture } from './workshop';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { Board, type PinListener } from '../sim/board';
-import { AudioOut, BOARD_TERMINALS, PARTS, type Part } from '../sim/parts';
+import { AudioOut, BOARD_TERMINALS, FACES, PARTS, type Part } from '../sim/parts';
 import { pinLook } from '../ui/boardview';
 import { colorFor, endpoint, endpointExists, endpointLabel, newWireId, solve, splitEndpoint, type Issue, type Wire } from '../sim/circuit';
 
@@ -52,7 +52,9 @@ export class World {
   /** grid size parts snap to while dragging, in cm */
   snap = 0.5;
   /** view options: pin labels over the board, the camera riding with a robot, wires drawn through parts */
-  view = { pinLabels: 'used' as 'off' | 'used' | 'all', follow: false, wiresOnTop: false };
+  view = { pinLabels: 'used' as 'off' | 'used' | 'all', follow: false, wiresOnTop: false, arrows: true };
+  private arrows = new THREE.Group();
+  private facingArrow: THREE.Mesh;
   private pinTags = new Map<number, { sprite: THREE.Sprite; line: THREE.Line; draw: (cls: string) => void; cls: string }>();
   private tagsAt = 0;
   /** simulation speed (0 while paused), so robots drive in step with the sketch */
@@ -104,6 +106,8 @@ export class World {
   private drag: null | {
     part: Part; offset: THREE.Vector3; startX: number; startY: number; moved: boolean; mode: DragMode; startVal?: number;
     from: { x: number; z: number; mount?: string; mdx?: number; mdz?: number };
+    /** dragging a direction arrow: only this axis moves */
+    axis?: [number, number];
   } = null;
   private wiring: null | { from: string; startX: number; startY: number; sticky: boolean } = null;
   private clock = new THREE.Clock();
@@ -205,6 +209,21 @@ export class World {
     this.hoverDot.visible = false;
     this.scene.add(this.hoverDot);
     this.scene.add(this.probeMarks.red, this.probeMarks.black);
+    // direction arrows around the selected part: +x east, -x west, -z north, +z south
+    for (const [dx, dz, rot] of [[1, 0, 0], [-1, 0, Math.PI], [0, -1, Math.PI / 2], [0, 1, -Math.PI / 2]] as const) {
+      const a = new THREE.Mesh(ARROW_GEO, new THREE.MeshBasicMaterial({ color: '#19c3bb', transparent: true, opacity: 0.9, depthTest: false, side: THREE.DoubleSide }));
+      a.rotation.y = rot;
+      a.renderOrder = 16;
+      a.userData.dir = [dx, dz];
+      this.arrows.add(a);
+    }
+    this.arrows.visible = false;
+    this.scene.add(this.arrows);
+    this.facingArrow = new THREE.Mesh(ARROW_GEO, new THREE.MeshBasicMaterial({ color: '#f2b705', transparent: true, opacity: 0.95, depthTest: false, side: THREE.DoubleSide }));
+    this.facingArrow.renderOrder = 16;
+    this.facingArrow.visible = false;
+    this.scene.add(this.facingArrow);
+    this.addCompassMarks();
     // footprint shown under a part while it's dragged: green where it fits, red where it would overlap
     this.ghost = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ color: '#2fbf71', transparent: true, opacity: 0.28, depthWrite: false }));
     this.ghost.rotation.x = -Math.PI / 2;
@@ -474,8 +493,15 @@ export class World {
     part.group!.updateMatrixWorld(true);
   }
 
-  rotatePart(part: Part) {
-    part.rot = (part.rot + 1) % 4;
+  rotatePart(part: Part, dir: 1 | -1 = 1) {
+    const rot = (part.rot + dir + 4) % 4;
+    // a quarter turn can swing a long part into a neighbour
+    if (!this.hostOf(part) && this.blockedAt(part, part.x, part.z, undefined, (-rot * Math.PI) / 2) && !this.blockedAt(part, part.x, part.z)) {
+      this.audio.sfx('unsnap');
+      return;
+    }
+    part.rot = rot;
+    delete part.state.pose;
     this.placeGroup(part);
     this.wiresDirty = true;
     this.hitsDirty = true;
@@ -694,6 +720,116 @@ export class World {
   setSnap(step: number) {
     this.snap = step;
     if (this.grid) { this.scene.remove(this.grid); this.grid = null; }
+  }
+
+  /** Slide a part by dx/dz cm. Refuses to overlap anything; a part on a robot stays on its deck if it can. */
+  moveBy(part: Part, dx: number, dz: number): boolean {
+    if (part.locked) return false;
+    const x = THREE.MathUtils.clamp(part.x + dx, -DESK, DESK), z = THREE.MathUtils.clamp(part.z + dz, -DESK, DESK);
+    const host = this.deckUnder(part, x, z);
+    if (!host && this.blockedAt(part, x, z) && !this.blockedAt(part, part.x, part.z)) {
+      this.audio.sfx('unsnap');
+      return false;
+    }
+    part.x = x;
+    part.z = z;
+    delete part.state.pose;
+    this.unmount(part);
+    if (host) this.mount(part, host);
+    else this.placeGroup(part);
+    this.wiresDirty = true;
+    this.hitsDirty = true;
+    this.shadowDirty = true;
+    this.kick();
+    this.onChange();
+    return true;
+  }
+
+  /** One step away from, toward, or across the camera's view: whichever desk axis is closest. */
+  nudge(part: Part, dir: 'up' | 'down' | 'left' | 'right', big = false): boolean {
+    const look = this.controls.target.clone().sub(this.camera.position).setY(0);
+    // straight down the camera has no forward direction on the desk: use its up vector
+    if (look.lengthSq() < 0.01) look.set(0, 0, -1);
+    const fwd: [number, number] = Math.abs(look.x) > Math.abs(look.z) ? [Math.sign(look.x), 0] : [0, Math.sign(look.z)];
+    const right: [number, number] = [-fwd[1], fwd[0]];
+    const [ax, az] = dir === 'up' ? fwd : dir === 'down' ? [-fwd[0], -fwd[1]] : dir === 'right' ? right : [-right[0], -right[1]];
+    const step = (this.snap || 0.25) * (big ? 5 : 1);
+    return this.moveBy(part, ax * step, az * step);
+  }
+
+  /** The way a part points, as a compass name (north is away from the default camera). */
+  facingName(part: Part): string | null {
+    const f = FACES[part.type];
+    if (!f || !part.group) return null;
+    const a = part.group.rotation.y;
+    const bearing = (Math.atan2(f * Math.sin(a), -f * Math.cos(a)) * 180) / Math.PI;
+    return ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'][Math.round(((bearing + 360) % 360) / 45) % 8];
+  }
+
+  private nudgeAlong(part: Part, axis: [number, number]) {
+    const step = this.snap || 0.25;
+    if (this.moveBy(part, axis[0] * step, axis[1] * step)) this.audio.sfx('press');
+  }
+
+  /** Where the camera looks from, in degrees: 0 with north straight up the screen. */
+  get cameraBearing(): number {
+    const c = this.camera.position, t = this.controls.target;
+    return (Math.atan2(c.x - t.x, c.z - t.z) * 180) / Math.PI;
+  }
+
+  /** Keep the arrows around the selected part, the same size on screen at any zoom. */
+  private updateArrows() {
+    const sel = this.selected;
+    const show = !!sel?.group && this.view.arrows && !this.probe.active;
+    this.arrows.visible = show && !sel!.locked && !sel!.state.heldBy;
+    this.facingArrow.visible = false;
+    if (!show) return;
+    const r = this.rectOf(sel!);
+    const cx = (r.minX + r.maxX) / 2, cz = (r.minZ + r.maxZ) / 2, y = sel!.group!.position.y + 0.1;
+    const s = THREE.MathUtils.clamp(this.camera.position.distanceTo(sel!.group!.position) * 0.03, 0.45, 3);
+    const gap = 0.35 * s;
+    for (const a of this.arrows.children) {
+      const [dx, dz] = a.userData.dir;
+      a.position.set(dx > 0 ? r.maxX + gap : dx < 0 ? r.minX - gap : cx, y, dz > 0 ? r.maxZ + gap : dz < 0 ? r.minZ - gap : cz);
+      a.scale.setScalar(s);
+      ((a as THREE.Mesh).material as THREE.MeshBasicMaterial).color.set(a === this.hoverArrow ? '#7ff5ee' : '#19c3bb');
+    }
+    const f = FACES[sel!.type];
+    if (f) {
+      const ang = sel!.group!.rotation.y;
+      const fx = f * Math.sin(ang), fz = f * Math.cos(ang);
+      const reach = Math.max(r.maxX - r.minX, r.maxZ - r.minZ) / 2 + gap + 1.5 * s;
+      this.facingArrow.visible = true;
+      this.facingArrow.position.set(cx + fx * reach, y, cz + fz * reach);
+      this.facingArrow.rotation.y = Math.atan2(-fz, fx);
+      this.facingArrow.scale.setScalar(s * 0.8);
+    }
+  }
+
+  private hoverArrow: THREE.Object3D | null = null;
+
+  private pickArrow(e: { clientX: number; clientY: number }): THREE.Object3D | null {
+    if (!this.arrows.visible) return null;
+    this.raycaster.setFromCamera(this.ndc(e), this.camera);
+    return this.raycaster.intersectObjects(this.arrows.children, false)[0]?.object ?? null;
+  }
+
+  /** N, E, S and W printed around the edge of the mat. */
+  private addCompassMarks() {
+    for (const [label, x, z, rot] of [['N', 0, -MAT_D / 2 + 2.2, 0], ['S', 0, MAT_D / 2 - 2.2, 0], ['E', MAT_W / 2 - 2.2, 0, 0], ['W', -MAT_W / 2 + 2.2, 0, 0]] as const) {
+      const c = document.createElement('canvas');
+      c.width = c.height = 64;
+      const g = c.getContext('2d')!;
+      g.fillStyle = '#ffffff';
+      g.font = '700 46px "IBM Plex Mono", monospace';
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.fillText(label, 32, 34);
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 2.4), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(c), transparent: true, opacity: 0.55, depthWrite: false }));
+      m.rotation.set(-Math.PI / 2, 0, rot);
+      m.position.set(x + MAT_X, 0.05, z + MAT_Z);
+      this.scene.add(m);
+    }
   }
 
   /** Footprint radius of a part on the desk, in cm. */
@@ -989,6 +1125,20 @@ export class World {
       this.cancelWiring();
       return;
     }
+    const arrow = this.pickArrow(e);
+    if (arrow && this.selected) {
+      const part = this.selected;
+      const gp = this.groundPoint(e) ?? new THREE.Vector3();
+      this.drag = {
+        part, mode: 'move', moved: false, startX: e.clientX, startY: e.clientY,
+        offset: new THREE.Vector3(part.x - gp.x, 0, part.z - gp.z),
+        from: { x: part.x, z: part.z, mount: part.props.mount, mdx: part.props.mdx, mdz: part.props.mdz },
+        axis: arrow.userData.dir,
+      };
+      this.controls.enabled = false;
+      this.renderer.domElement.setPointerCapture(e.pointerId);
+      return;
+    }
     if (ep) {
       this.wiring = { from: ep, startX: e.clientX, startY: e.clientY, sticky: false };
       this.controls.enabled = false;
@@ -1037,6 +1187,8 @@ export class World {
       return;
     }
     if (!d) {
+      this.hoverArrow = this.pickArrow(e);
+      if (this.hoverArrow) { this.setHover(null); this.renderer.domElement.style.cursor = 'pointer'; return; }
       const ep = this.pickTerminal(e);
       this.setHover(ep, e);
       if (ep) { this.renderer.domElement.style.cursor = 'crosshair'; return; }
@@ -1065,6 +1217,7 @@ export class World {
       const g = this.snap || 0.25;
       d.part.x = THREE.MathUtils.clamp(Math.round((gp.x + d.offset.x) / g) * g, -DESK, DESK);
       d.part.z = THREE.MathUtils.clamp(Math.round((gp.z + d.offset.z) / g) * g, -DESK, DESK);
+      if (d.axis) { if (d.axis[0]) d.part.z = d.from.z; else d.part.x = d.from.x; }
       delete d.part.state.pose; // dragging a robot puts it back on its home spot
       this.placeGroup(d.part);
       this.wiresDirty = true;
@@ -1109,6 +1262,7 @@ export class World {
       setTimeout(() => { p.state.pressed = false; }, 220);
     }
     if (d.mode === 'stick') { d.part.state.sx = 0; d.part.state.sy = 0; d.part.state.pressed = false; }
+    if (d.axis && !d.moved) { this.nudgeAlong(d.part, d.axis); return; } // a click on an arrow is one step
     if (d.moved && d.mode === 'move') {
       this.ghost.visible = false;
       this.showGrid(null);
@@ -1185,6 +1339,7 @@ export class World {
       if (at) this.probeMarks[k].position.copy(at);
     }
     this.followRobot();
+    this.updateArrows();
     if (performance.now() - this.tagsAt > 120) { this.tagsAt = performance.now(); this.updatePinTags(); }
     if (this.hoverDot.visible) this.hoverDot.scale.setScalar(1 + Math.sin(performance.now() / 150) * 0.15);
     this.updateSpill();
@@ -1220,6 +1375,20 @@ function localFootprint(g: THREE.Group): { minX: number; maxX: number; minZ: num
   if (box.isEmpty()) return { minX: -1, maxX: 1, minZ: -1, maxZ: 1 };
   return { minX: box.min.x, maxX: box.max.x, minZ: box.min.z, maxZ: box.max.z };
 }
+
+/** A flat arrow lying on the desk, pointing along +x. */
+const ARROW_GEO = (() => {
+  const s = new THREE.Shape();
+  s.moveTo(0, -0.28);
+  s.lineTo(0.75, -0.28);
+  s.lineTo(0.75, -0.62);
+  s.lineTo(1.5, 0);
+  s.lineTo(0.75, 0.62);
+  s.lineTo(0.75, 0.28);
+  s.lineTo(0, 0.28);
+  s.closePath();
+  return new THREE.ShapeGeometry(s).rotateX(-Math.PI / 2);
+})();
 
 // shared by every click target, so scenes with packed breadboards stay cheap
 const HIT_MAT = new THREE.MeshBasicMaterial({ visible: false });

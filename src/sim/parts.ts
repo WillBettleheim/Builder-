@@ -3206,6 +3206,9 @@ const bolt: PartDef = {
   },
 };
 
+/** Parts that point somewhere: which way along their own z axis they face. */
+export const FACES: Record<string, number> = { ultrasonic: 1, arm: 1, robot: -1, bolt: -1, irprox: -1, bumper: -1, linesensor: -1, lighteyes: -1 };
+
 export const PARTS: Record<string, PartDef> = Object.fromEntries(
   [uno, led, rgbLed, button, pot, ldr, tmp36, buzzer, ultrasonic, servo, motor, trafficLight, car, lcd, sevenSeg, pir, joystick, neopixel, bigBreadboard, relay, dht11, oled, stepper, keypad, soil, encoder, matrix, hall, magnet, sound, gas, irRemote, bluetooth, digits, sdcard, robotCar, trackMat, lineSensor, wall, robotArm, cube, pad, bumper, irProx, encoders, lightEyes, beacon, bolt].map(d => [d.type, d]),
 );
