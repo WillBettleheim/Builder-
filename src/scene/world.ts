@@ -79,6 +79,8 @@ export class World {
   private ao: GTAOPass;
   private outline: OutlinePass;
   private hoverPart: Part | null = null;
+  /** a part to outline because the pointer is on one of its pins in the board diagram */
+  highlight: Part | null = null;
   private lampLight!: THREE.SpotLight;
   private sun!: THREE.DirectionalLight;
   quality: 'high' | 'balanced' | 'low' = 'high';
@@ -468,6 +470,11 @@ export class World {
       const lx = ox * c - oz * s, lz = ox * s + oz * c; // into the host's frame
       return lx >= d.minX && lx <= d.maxX && lz >= d.minZ && lz <= d.maxZ;
     });
+  }
+
+  /** Put every mounted part on its host: needed right after a scene loads, before framing it. */
+  settleMounted() {
+    for (const p of this.parts) if (p.props.mount && p.group) this.placeGroup(p);
   }
 
   /** Mount a part on a host at its current spot, snapping the offset to the grid. */
@@ -1041,7 +1048,7 @@ export class World {
     const obstacles = this.parts.filter(p => PARTS[p.type].obstacle && p.group).map(p => p.group!);
     for (const p of this.parts) {
       const powered = !p.state.missing?.length;
-      PARTS[p.type].update?.(p, this.board, { running: this.running && powered, dt, obstacles, audio: this.audio, parts: this.parts });
+      PARTS[p.type].update?.(p, this.board, { running: this.running && powered, dt, simDt: dt * this.timeScale, obstacles, audio: this.audio, parts: this.parts });
     }
     const sel = this.selected;
     if (sel?.group) {
@@ -1061,7 +1068,7 @@ export class World {
     if (performance.now() - this.tagsAt > 120) { this.tagsAt = performance.now(); this.updatePinTags(); }
     if (this.hoverDot.visible) this.hoverDot.scale.setScalar(1 + Math.sin(performance.now() / 150) * 0.15);
     this.updateSpill();
-    const outlined = [this.selected, this.hoverPart].filter((p): p is Part => !!p?.group).map(p => p.group!);
+    const outlined = [this.selected, this.hoverPart, this.highlight].filter((p): p is Part => !!p?.group).map(p => p.group!);
     this.outline.selectedObjects = [...new Set(outlined)];
     this.stepGlide(dt);
     this.controls.update();
