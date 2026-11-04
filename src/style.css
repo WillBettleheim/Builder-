@@ -894,3 +894,17 @@ body.instructor-on .guide { max-height: calc(100% - 40px); }
   .board-panel .panel-head { padding-top: 6px; padding-bottom: 6px; }
   .bv-legend { padding-bottom: 6px; }
 }
+
+/* live board: interaction */
+.bv-summary { margin-left: 10px; margin-right: auto; font: 500 10.5px var(--mono); color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.board-panel .panel-head { display: flex; align-items: center; }
+.bv-pin.linked { cursor: pointer; }
+.bv-pin.linked:hover .bv-halo { fill: rgba(255, 255, 255, 0.22); }
+.bv-pin.picked .bv-halo { fill: none; stroke: #fff; stroke-width: 2; }
+.bv-fixed .bv-ring { fill: none; stroke: transparent; stroke-width: 2; }
+.bv-fixed.wired .bv-ring { stroke: #ffffff; }
+.bv-fixed:not(.wired) circle:not(.bv-ring) { opacity: 0.45; }
+.bv-fixed .bv-count { fill: #fff; font: 700 11px var(--mono); }
+.bv-large .bv { max-height: none; width: 100%; }
+.bv-pin.data .bv-dot { fill: #8fa3b5; stroke: #d3dde6; }
+.bv-legend .data { background: #8fa3b5; }
