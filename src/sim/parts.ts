@@ -44,6 +44,8 @@ export interface Part {
 export interface UpdateCtx {
   running: boolean;
   dt: number;
+  /** dt scaled by the simulation speed (0 while paused), for things that move in step with the sketch */
+  simDt: number;
   obstacles: THREE.Object3D[];
   audio: AudioOut;
   parts: Part[];
@@ -896,7 +898,7 @@ const servo: PartDef = {
     const cur = part.state.angle ?? 90;
     let next = cur;
     if (target !== undefined) {
-      const maxStep = 600 * ctx.dt; // ~0.1 s per 60°
+      const maxStep = 600 * ctx.simDt; // ~0.1 s per 60°
       next = cur + Math.max(-maxStep, Math.min(maxStep, target - cur));
     }
     part.state.angle = next;
@@ -2457,6 +2459,15 @@ const sdcard: PartDef = {
 // ---------- robotics: a 2-wheel robot car, line tracks, walls and a robot arm ----------
 const ROBOT = { track: 13.6, wheelR: 3.2, vmax: 22, deckY: 3.6 };
 
+/** Wheel speeds from an L298N motor driver's pins. */
+function l298n(part: Part, board: Board, vmax: number, track: number) {
+  const lvl = (k: string) => (part.pins[k] == null ? 0 : board.level(part.pins[k]));
+  // an unwired ENA/ENB has its jumper cap on: full speed
+  const en = (k: string) => (part.pins[k] == null ? 1 : lvl(k));
+  const dir = (a: string, b: string) => Number(lvl(a) > 0.5) - Number(lvl(b) > 0.5);
+  return { left: dir('in1', 'in2') * en('ena') * vmax, right: dir('in3', 'in4') * en('enb') * vmax, track };
+}
+
 const robotCar: PartDef = {
   type: 'robot',
   name: 'Robot Car',
@@ -2501,18 +2512,12 @@ const robotCar: PartDef = {
     g.userData.robot = { wheels };
     return g;
   },
-  drive(part, board) {
-    const lvl = (k: string) => (part.pins[k] == null ? 0 : board.level(part.pins[k]));
-    // an unwired ENA/ENB has its jumper cap on: full speed
-    const en = (k: string) => (part.pins[k] == null ? 1 : lvl(k));
-    const dir = (a: string, b: string) => Number(lvl(a) > 0.5) - Number(lvl(b) > 0.5);
-    return { left: dir('in1', 'in2') * en('ena') * ROBOT.vmax, right: dir('in3', 'in4') * en('enb') * ROBOT.vmax, track: ROBOT.track };
-  },
+  drive: (part, board) => l298n(part, board, ROBOT.vmax, ROBOT.track),
   update(part, _board, ctx) {
     const st = part.state;
     const [l, r] = part.group!.userData.robot.wheels;
-    l.rotation.x -= ((st.vl ?? 0) / ROBOT.wheelR) * ctx.dt;
-    r.rotation.x -= ((st.vr ?? 0) / ROBOT.wheelR) * ctx.dt;
+    l.rotation.x -= ((st.vl ?? 0) / ROBOT.wheelR) * ctx.simDt;
+    r.rotation.x -= ((st.vr ?? 0) / ROBOT.wheelR) * ctx.simDt;
     const speed = Math.abs(st.vl ?? 0) + Math.abs(st.vr ?? 0);
     ctx.audio.set(part.id, ctx.running && speed > 0.5 ? 70 + speed * 2.2 : null); // gear-motor whine
   },
@@ -2714,7 +2719,7 @@ const robotArm: PartDef = {
     const want = (k: string) => (ctx.running && part.pins[k] != null ? board.servoAngles.get(part.pins[k]!) ?? 90 : st[k] ?? 90);
     for (const k of ['base', 'shoulder', 'elbow', 'claw']) {
       const cur = st[k] ?? 90, target = want(k);
-      st[k] = cur + Math.max(-300 * ctx.dt, Math.min(300 * ctx.dt, target - cur));
+      st[k] = cur + Math.max(-300 * ctx.simDt, Math.min(300 * ctx.simDt, target - cur));
     }
     u.yaw.rotation.y = ((st.base - 90) * Math.PI) / 180;
     u.shoulder.rotation.x = ((90 - st.shoulder) * Math.PI) / 180;
@@ -3035,12 +3040,178 @@ const beacon: PartDef = {
   },
 };
 
+// ---------- Bolt: a complete little robot with a face, a turning head and a voice ----------
+const BOLT = { wheelR: 2, track: 10.2, vmax: 16, deckY: 3.6, eyeY: 2.45, eyeZ: -2.3 };
+const BOLT_TERMS: [string, string][] = [
+  ['ena', 'ENA (left speed)'], ['in1', 'IN1'], ['in2', 'IN2'], ['in3', 'IN3'], ['in4', 'IN4'], ['enb', 'ENB (right speed)'],
+  ['head', 'Head'], ['trig', 'TRIG'], ['echo', 'ECHO'], ['din', 'DIN'], ['clk', 'CLK'], ['cs', 'CS'], ['buzz', 'Voice'],
+];
+
+/** Draw the LED face: lit dots on a dark panel. */
+function drawBoltFace(c: HTMLCanvasElement, rows: number[] | null, level: number) {
+  const g = c.getContext('2d')!;
+  const cell = c.width / 8;
+  g.fillStyle = '#0c0d10';
+  g.fillRect(0, 0, c.width, c.height);
+  for (let r = 0; r < 8; r++) for (let col = 0; col < 8; col++) {
+    const on = !!rows && ((rows[r] >> (7 - col)) & 1) === 1;
+    g.fillStyle = on ? `rgba(70, 225, 255, ${0.45 + level * 0.55})` : '#1a2026';
+    g.beginPath();
+    g.arc((col + 0.5) * cell, (r + 0.5) * cell, cell * 0.38, 0, Math.PI * 2);
+    g.fill();
+  }
+}
+
+const bolt: PartDef = {
+  type: 'bolt',
+  name: 'Bolt (mini robot)',
+  blurb: 'A complete little robot. Two wheels (L298N: IN1–IN4, ENA, ENB), a head on a servo with ultrasonic eyes that turn with it, an 8×8 LED face (LedControl) and a buzzer voice. Head 90° looks ahead, 180° left, 0° right. The board rides on its back.',
+  terminals: () => [
+    ...BOLT_TERMS.map(([key, label], i) => ({ key, label, kind: 'signal' as const, pos: [row(15, i, 0.58), BOLT.deckY - 0.25, 6.15] as [number, number, number] })),
+    { key: 'vcc', label: 'VCC', kind: '5V', pos: [row(15, 13, 0.58), BOLT.deckY - 0.25, 6.15] },
+    { key: 'gnd', label: 'GND', kind: 'GND', pos: [row(15, 14, 0.58), BOLT.deckY - 0.25, 6.15] },
+  ],
+  deck: { minX: -4.5, maxX: 4.5, minZ: -0.5, maxZ: 5.8, y: BOLT.deckY },
+  build() {
+    const g = new THREE.Group();
+    const shell = new THREE.MeshPhysicalMaterial({ color: '#f3f5f7', roughness: 0.35, clearcoat: 0.7 });
+    const accent = mat('#14b8c4', { roughness: 0.4 });
+    const dark = mat('#23252b', { roughness: 0.6 });
+    // body
+    g.add(at(box(9, 2.8, 12, shell, 0.9), 0, BOLT.deckY - 1.4, 0));
+    g.add(at(box(9.1, 0.35, 12.1, accent, 0.15), 0, 1.5, 0));
+    // the connector strip across its back
+    g.add(at(box(8.9, 0.14, 0.7, mat('#1d4fa0'), 0.03), 0, BOLT.deckY - 0.5, 6.15));
+    for (let i = 0; i < 15; i++) g.add(at(cyl(0.035, 0.035, 0.3, M.gold, 6), row(15, i, 0.58), BOLT.deckY - 0.4, 6.15));
+    // wheels
+    const wheels: THREE.Group[] = [];
+    for (const side of [-1, 1]) {
+      const w = new THREE.Group();
+      w.position.set(side * (BOLT.track / 2), BOLT.wheelR, 0.5);
+      const tire = cyl(BOLT.wheelR, BOLT.wheelR, 1, mat('#1b1c1f', { roughness: 0.9 }), 28);
+      tire.rotation.z = Math.PI / 2;
+      const hub = cyl(0.9, 0.9, 1.05, accent, 18);
+      hub.rotation.z = Math.PI / 2;
+      w.add(tire, hub);
+      for (let i = 0; i < 2; i++) { const sp = box(1.07, 0.25, 1.7, mat('#e9edf1'), 0.03); sp.rotation.x = (i * Math.PI) / 2; w.add(sp); }
+      g.add(w);
+      wheels.push(w);
+    }
+    g.add(at(new THREE.Mesh(new THREE.SphereGeometry(0.75, 16, 12), M.metal), 0, 0.75, -4.6)); // front caster
+    // neck and head, which turn together on the servo
+    g.add(at(cyl(1.1, 1.3, 0.5, dark, 24), 0, BOLT.deckY + 0.2, -3));
+    const head = new THREE.Group();
+    head.position.set(0, BOLT.deckY + 0.45, -3);
+    head.add(at(box(6.2, 3.8, 4, shell, 0.85), 0, 1.9, 0));
+    // face panel
+    const c = document.createElement('canvas');
+    c.width = c.height = 128;
+    drawBoltFace(c, null, 0);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 8;
+    const faceMat = new THREE.MeshStandardMaterial({ map: tex, emissiveMap: tex, emissive: new THREE.Color('#ffffff'), emissiveIntensity: 0, roughness: 0.3 });
+    const face = new THREE.Mesh(new THREE.PlaneGeometry(2.5, 2.5), faceMat);
+    face.rotation.y = Math.PI;
+    face.position.set(0, 1.5, -2.08); // just in front of the dark panel behind it
+    head.add(at(box(2.9, 2.9, 0.12, dark, 0.05), 0, 1.5, -2.0));
+    head.add(face);
+    // ultrasonic eyes on its brow
+    for (const x of [-1.35, 1.35]) {
+      const eye = cyl(0.55, 0.55, 0.45, M.metal, 22);
+      eye.rotation.x = Math.PI / 2;
+      eye.position.set(x, 3.25, -2.1);
+      head.add(eye);
+      const mesh = cyl(0.42, 0.42, 0.47, dark, 22);
+      mesh.rotation.x = Math.PI / 2;
+      mesh.position.set(x, 3.25, -2.11);
+      head.add(mesh);
+    }
+    // antenna with a light that blinks when it speaks
+    head.add(at(cyl(0.07, 0.07, 1.4, M.metal, 8), 0, 4.4, 0));
+    const tip = makeLed('#ff5040');
+    tip.group.scale.setScalar(0.5);
+    tip.group.position.set(0, 4.95, 0);
+    head.add(tip.group);
+    g.add(head);
+    const beam = new THREE.Mesh(new THREE.BoxGeometry(1, 0.06, 1), new THREE.MeshBasicMaterial({ color: '#14b8c4', transparent: true, opacity: 0, depthWrite: false }));
+    head.add(beam);
+    g.userData.bolt = { head, wheels, canvas: c, tex, faceMat, tip, beam, key: '' };
+    return g;
+  },
+  drive: (part, board) => l298n(part, board, BOLT.vmax, BOLT.track),
+  update(part, board, ctx) {
+    const u = part.group!.userData.bolt;
+    const st = part.state;
+    // wheels
+    u.wheels[0].rotation.x -= ((st.vl ?? 0) / BOLT.wheelR) * ctx.simDt;
+    u.wheels[1].rotation.x -= ((st.vr ?? 0) / BOLT.wheelR) * ctx.simDt;
+    // the head glides towards the servo's commanded angle
+    const want = ctx.running && part.pins.head != null ? board.servoAngles.get(part.pins.head) ?? 90 : st.headAngle ?? 90;
+    const cur = st.headAngle ?? 90;
+    st.headAngle = cur + Math.max(-300 * ctx.simDt, Math.min(300 * ctx.simDt, want - cur));
+    u.head.rotation.y = ((st.headAngle - 90) * Math.PI) / 180;
+    u.head.updateMatrixWorld(true);
+    // eyes: measure straight out of the head
+    const hit = lookAhead(u.head, ctx, [0, BOLT.eyeY + 0.8, BOLT.eyeZ], -1, 400);
+    st.distance = Math.max(2, hit);
+    const show = ctx.running && performance.now() - (st.lastPing ?? -1e9) < 300;
+    const len = Math.min(st.distance, 60);
+    u.beam.scale.set(1.8, 1, len);
+    u.beam.position.set(0, BOLT.eyeY + 0.8, BOLT.eyeZ - len / 2);
+    (u.beam.material as THREE.MeshBasicMaterial).opacity = show ? 0.16 : 0;
+    // face
+    const data = ctx.running ? board.matrices.get([part.pins.din, part.pins.clk, part.pins.cs].join(',')) : undefined;
+    const rows = data && !data.shutdown ? data.rows : null;
+    const level = data ? data.intensity / 15 : 0;
+    st.faceRows = rows;
+    const key = `${rows?.join(',')}|${level}`;
+    if (key !== u.key) {
+      u.key = key;
+      drawBoltFace(u.canvas, rows, level);
+      u.tex.needsUpdate = true;
+      u.faceMat.emissiveIntensity = rows ? 1 : 0;
+    }
+    // voice and motors share one sound channel: a beep wins over the whine
+    const freq = ctx.running ? board.activeTone(part.pins.buzz) : null;
+    st.freq = freq;
+    setLed(u.tip, freq ? 1 : 0);
+    const speed = Math.abs(st.vl ?? 0) + Math.abs(st.vr ?? 0);
+    ctx.audio.set(part.id, freq ?? (ctx.running && speed > 0.5 ? 90 + speed * 3 : null));
+  },
+  listener(part) {
+    return {
+      onWrite(pin, value) {
+        if (pin !== part.pins.trig) return;
+        if (value) part.state.trigHigh = true;
+        else if (part.state.trigHigh) { part.state.trigHigh = false; part.state.armed = true; }
+      },
+      pulse(pin, level, board) {
+        if (pin !== part.pins.echo || !level) return undefined;
+        if (!part.state.armed) {
+          board.hint('trig', 'Bolt’s eyes only answer after a trigger pulse: digitalWrite(TRIG, HIGH); delayMicroseconds(10); digitalWrite(TRIG, LOW); then pulseIn(ECHO, HIGH).');
+          return undefined;
+        }
+        part.state.armed = false;
+        part.state.lastPing = performance.now();
+        const d = part.state.distance ?? Infinity;
+        return d > 400 ? undefined : d * 58.3 + (Math.random() - 0.5) * 20;
+      },
+    };
+  },
+  readout: part => {
+    const st = part.state, d = st.distance;
+    const lit = (st.faceRows ?? []).reduce((n: number, r: number) => { let v = r, k = n; while (v) { k += v & 1; v >>= 1; } return k; }, 0);
+    return `Head <b>${Math.round(st.headAngle ?? 90)}°</b> · sees <b>${d != null && d <= 400 ? `${d.toFixed(0)} cm` : 'nothing'}</b> · face <b>${lit}</b> LEDs${st.freq ? ` · saying <b>${Math.round(st.freq)} Hz</b>` : ''}`;
+  },
+};
+
 export const PARTS: Record<string, PartDef> = Object.fromEntries(
-  [uno, led, rgbLed, button, pot, ldr, tmp36, buzzer, ultrasonic, servo, motor, trafficLight, car, lcd, sevenSeg, pir, joystick, neopixel, bigBreadboard, relay, dht11, oled, stepper, keypad, soil, encoder, matrix, hall, magnet, sound, gas, irRemote, bluetooth, digits, sdcard, robotCar, trackMat, lineSensor, wall, robotArm, cube, pad, bumper, irProx, encoders, lightEyes, beacon].map(d => [d.type, d]),
+  [uno, led, rgbLed, button, pot, ldr, tmp36, buzzer, ultrasonic, servo, motor, trafficLight, car, lcd, sevenSeg, pir, joystick, neopixel, bigBreadboard, relay, dht11, oled, stepper, keypad, soil, encoder, matrix, hall, magnet, sound, gas, irRemote, bluetooth, digits, sdcard, robotCar, trackMat, lineSensor, wall, robotArm, cube, pad, bumper, irProx, encoders, lightEyes, beacon, bolt].map(d => [d.type, d]),
 );
 
 /** Parts shown in the sandbox palette, in order. */
-export const PALETTE = ['breadboard', 'led', 'rgb', 'button', 'keypad', 'pot', 'encoder', 'joystick', 'ldr', 'temp', 'dht', 'soil', 'gas', 'sound', 'hall', 'pir', 'buzzer', 'ultrasonic', 'servo', 'stepper', 'motor', 'relay', 'traffic', 'seg7', 'digits', 'lcd', 'oled', 'matrix', 'neopixel', 'ir', 'bluetooth', 'sdcard', 'robot', 'linesensor', 'irprox', 'bumper', 'encoders', 'lighteyes', 'beacon', 'arm', 'cube', 'track', 'pad', 'wall', 'magnet', 'car'];
+export const PALETTE = ['breadboard', 'led', 'rgb', 'button', 'keypad', 'pot', 'encoder', 'joystick', 'ldr', 'temp', 'dht', 'soil', 'gas', 'sound', 'hall', 'pir', 'buzzer', 'ultrasonic', 'servo', 'stepper', 'motor', 'relay', 'traffic', 'seg7', 'digits', 'lcd', 'oled', 'matrix', 'neopixel', 'ir', 'bluetooth', 'sdcard', 'bolt', 'robot', 'linesensor', 'irprox', 'bumper', 'encoders', 'lighteyes', 'beacon', 'arm', 'cube', 'track', 'pad', 'wall', 'magnet', 'car'];
 
 let idCounter = 0;
 export function newPart(type: string, init: Partial<Part> = {}): Part {

@@ -3,6 +3,22 @@
 export interface Question { q: string; a: string[]; correct: number; why: string }
 
 export const QUIZZES: Record<string, Question[]> = {
+  'bolt-hello': [
+    { q: 'What does head.write(180) do to Bolt?', a: ['Turns its head to look left', 'Drives it forward', 'Lights its face'], correct: 0, why: 'The head sits on a servo: 90 is straight ahead, 180 is left and 0 is right.' },
+    { q: 'Why call face.shutdown(0, false) first?', a: ['The LED matrix chip starts asleep', 'It turns the robot off', 'It clears the servo'], correct: 0, why: 'The MAX7219 chip powers up asleep, so nothing shows until you wake it.' },
+  ],
+  'bolt-follow': [
+    { q: 'What is the dead band for?', a: ['So the robot rests instead of twitching around one exact distance', 'To save the wheels from wearing out', 'To make the sensor more accurate'], correct: 0, why: 'With a range where it does nothing, Bolt settles down. With one exact target, it would hunt back and forth for ever.' },
+    { q: 'The block is 8 cm away. What should Bolt do?', a: ['Back away', 'Drive forward', 'Turn its head'], correct: 0, why: 'Under 12 cm is too close, so it reverses until it’s back in the dead band.' },
+  ],
+  'bolt-scan': [
+    { q: 'Why delay() after head.write()?', a: ['The servo needs time to turn before you measure', 'The sensor only works after a pause', 'To make Bolt look thoughtful'], correct: 0, why: 'write() only sets the target. Measure too soon and you’re still reading the old direction.' },
+    { q: 'left is 40 and right is 12. Which way should Bolt turn?', a: ['Left', 'Right', 'Neither'], correct: 0, why: 'The bigger number means more open space.' },
+  ],
+  'bolt-moods': [
+    { q: 'Why compare scared with wasScared?', a: ['To act only at the moment the mood changes', 'To measure distance twice', 'To slow down loop()'], correct: 0, why: 'loop() runs many times a second. Acting only on the change gives one squeak, not hundreds.' },
+    { q: 'How is each row of the face stored?', a: ['As one byte: each bit is one LED', 'As a colour', 'As a word of text'], correct: 0, why: '0b01100110 lights the LEDs where the 1s are, so 8 bytes draw a whole picture.' },
+  ],
   'bumper-bot': [
     { q: 'With INPUT_PULLUP, what does the bumper read when it hits a wall?', a: ['LOW', 'HIGH', '1023'], correct: 0, why: 'Pressing the lever connects the pin to GND, pulling it LOW.' },
     { q: 'What does a bumper tell you that an ultrasonic sensor doesn’t?', a: ['That the robot has actually touched something', 'How far away the wall is', 'The colour of the wall'], correct: 0, why: 'A bumper is a last line of defence: it only knows about a real touch, not distance.' },

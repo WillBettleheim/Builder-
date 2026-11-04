@@ -150,6 +150,9 @@ function symbol(type: string, x: number, y: number, c: Palette): string {
     case 'motor':
     case 'servo':
     case 'stepper':
+    case 'robot':
+    case 'bolt':
+    case 'arm':
       return `<circle cx="${x}" cy="${y}" r="15" ${s}/><text x="${x}" y="${y + 5}" text-anchor="middle" style="fill:${c.ink};font:700 14px sans-serif">M</text>`;
     case 'relay':
       return `<path ${s} d="M${x - 30} ${y - 10} h14 v20 h-14 z M${x - 30} ${y} l14 -10 M${x - 4} ${y + 10} H${x + 6} L${x + 26} ${y} M${x + 28} ${y + 10} H${x + 34}"/>`;

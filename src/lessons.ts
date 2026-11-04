@@ -3428,12 +3428,308 @@ ${LINE_FOLLOW_LOOP}
   },
 );
 
+// ---------- Bolt: a complete little robot ----------
+const BOLT_PINS = { ena: 5, in1: 7, in2: 8, in3: 9, in4: 10, enb: 6, head: 3, trig: 11, echo: 12, din: 2, clk: 4, cs: 13, buzz: 14 };
+const boltParts = (id: string, x = 0, z = 20): PartSpec[] => [boardOn(id, 2.9), { type: 'bolt', x, z, pins: BOLT_PINS }];
+const boltOf = (c: GoalCtx) => c.part('bolt');
+const faceLit = (c: GoalCtx) => (boltOf(c)?.state.faceRows ?? []).reduce((n: number, r: number) => { let v = r, k = n; while (v) { k += v & 1; v >>= 1; } return k; }, 0);
+const boltTravelled = (c: GoalCtx) => boltOf(c)?.state.travelled ?? 0;
+
+const BOLT_HEADER = `#include <Servo.h>
+#include <LedControl.h>
+
+Servo head;
+LedControl face = LedControl(2, 4, 13, 1);   // DIN, CLK, CS
+const int VOICE = A0, TRIG = 11, ECHO = 12;
+${MOTOR_SETUP}
+byte SMILE[8] = {
+  0b00000000,
+  0b01100110,
+  0b01100110,
+  0b00000000,
+  0b10000001,
+  0b01000010,
+  0b00111100,
+  0b00000000
+};
+
+void showFace(byte picture[]) {
+  for (int row = 0; row < 8; row++) face.setRow(0, row, picture[row]);
+}
+
+/** Centimetres to whatever the eyes see, or 999 when they see nothing. */
+long distanceCm() {
+  digitalWrite(TRIG, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG, LOW);
+  long us = pulseIn(ECHO, HIGH, 30000);
+  return us == 0 ? 999 : us / 58;
+}
+`;
+const BOLT_START = `  head.attach(3);
+  head.write(90);
+  face.shutdown(0, false);   // wake the face up
+  face.setIntensity(0, 8);
+  face.clearDisplay(0);
+  pinMode(TRIG, OUTPUT);
+  pinMode(ECHO, INPUT);
+${MOTOR_PINMODES}`;
+const SURPRISED = `byte SURPRISED[8] = {
+  0b00000000,
+  0b01100110,
+  0b01100110,
+  0b00000000,
+  0b00011000,
+  0b00100100,
+  0b00011000,
+  0b00000000
+};
+`;
+
+LESSONS.push(
+  {
+    id: 'bolt-hello',
+    title: 'Meet Bolt',
+    icon: 'bolt',
+    level: 'Robotics',
+    intro: `
+<p>Meet <strong>Bolt</strong>, a complete little robot. Everything you’ve learned is inside one body:</p>
+<ul>
+  <li><strong>Face:</strong> an 8×8 LED matrix (<code>face.setRow()</code>)</li>
+  <li><strong>Head:</strong> a servo: 90 looks ahead, 180 left, 0 right (<code>head.write()</code>)</li>
+  <li><strong>Eyes:</strong> an ultrasonic sensor that turns with the head</li>
+  <li><strong>Voice:</strong> a buzzer (<code>tone(VOICE, 880, 150)</code>)</li>
+  <li><strong>Wheels:</strong> the same <code>drive(left, right)</code> as the robot car</li>
+</ul>
+<p>Bolt can already smile. <strong>Say hello:</strong> make it beep, then look left and right.</p>`,
+    parts: boltParts('bolt-hello'),
+    code: `${BOLT_HEADER}
+void setup() {
+${BOLT_START}
+  showFace(SMILE);
+}
+
+void loop() {
+  // TODO: beep with tone(VOICE, 880, 150), then look left (180) and right (0)
+}
+`,
+    solution: `${BOLT_HEADER}
+void setup() {
+${BOLT_START}
+  showFace(SMILE);
+}
+
+void loop() {
+  tone(VOICE, 880, 150);
+  delay(300);
+  head.write(180);   // look left
+  delay(800);
+  head.write(0);     // look right
+  delay(1000);
+  head.write(90);    // straight ahead
+  delay(1500);
+}
+`,
+    goals: [
+      { text: 'Show a face', check: (c, m) => seen(m, 'x', faceLit(c) >= 8) },
+      { text: 'Say something with its voice', check: (c, m) => seen(m, 'x', !!boltOf(c)?.state.freq) },
+      { text: 'Look left and right', check: (c, m) => { const a = boltOf(c)?.state.headAngle ?? 90; if (a > 150) m.l = true; if (a < 30) m.r = true; return seen(m, 'x', !!m.l && !!m.r); } },
+    ],
+  },
+  {
+    id: 'bolt-follow',
+    title: 'Bolt: Follow Me',
+    icon: 'bolt',
+    level: 'Robotics',
+    intro: `
+<p>Teach Bolt to keep you company. It should stay about <strong>15 cm</strong> from the block in front of it, like a puppy on a lead:</p>
+<pre>too far  (over 20 cm) → drive forward
+too close (under 12)  → back away
+in between            → stop and smile</pre>
+<p>That gap between 12 and 20 is called a <strong>dead band</strong>. Without it, Bolt would twitch back and forth for ever around one exact distance.</p>
+<p><strong>Then play:</strong> drag the block closer and further away while it runs.</p>`,
+    parts: [...boltParts('bolt-follow'), { type: 'wall', x: 0, z: -18, props: { len: '10', color: '#f2b705' } }],
+    code: `${BOLT_HEADER}
+void setup() {
+  Serial.begin(9600);
+${BOLT_START}
+  showFace(SMILE);
+}
+
+void loop() {
+  long d = distanceCm();
+  Serial.println(d);
+  drive(130, 130);   // TODO: forward over 20 cm, back under 12, otherwise stop
+  delay(40);
+}
+`,
+    solution: `${BOLT_HEADER}
+void setup() {
+  Serial.begin(9600);
+${BOLT_START}
+  showFace(SMILE);
+}
+
+void loop() {
+  long d = distanceCm();
+  Serial.println(d);
+  if (d > 20) drive(130, 130);        // too far: catch up
+  else if (d < 12) drive(-130, -130); // too close: back away
+  else drive(0, 0);                   // just right
+  delay(40);
+}
+`,
+    goals: [
+      { text: 'Drive toward the block when it’s far away', check: (c, m) => seen(m, 'x', boltTravelled(c) >= 5) },
+      { text: 'Stop about 15 cm away and stay there', check: (c, m) => { const r = boltOf(c), d = r?.state.distance ?? 999; const ok = !!r?.state.pose && d >= 11 && d <= 21 && Math.abs(r.state.vl ?? 0) + Math.abs(r.state.vr ?? 0) < 0.5 && (r.state.bumps ?? 0) === 0; if (ok) m.since ??= c.board.time; else m.since = null; return seen(m, 'x', m.since != null && c.board.time - m.since > 1500); } },
+      { text: 'Challenge: drag the block close and Bolt backs away', check: (c, m) => { const r = boltOf(c); return seen(m, 'x', (r?.state.distance ?? 999) < 12 && (r?.state.vl ?? 0) < 0 && (r?.state.vr ?? 0) < 0); } },
+    ],
+  },
+  {
+    id: 'bolt-scan',
+    title: 'Bolt: Look Around',
+    icon: 'bolt',
+    level: 'Robotics',
+    intro: `
+<p>A robot that can turn its head doesn’t have to guess. When something blocks the way, Bolt can <strong>stop, look both ways, and pick the clearer side</strong>, just like you crossing a road.</p>
+<pre>long look(int angle) {
+  head.write(angle);
+  delay(600);          // give the servo time to get there
+  return distanceCm();
+}</pre>
+<p>Measure left (<code>170</code>) and right (<code>10</code>), then turn toward whichever number is bigger. Don’t forget to look ahead again!</p>`,
+    parts: [...boltParts('bolt-scan', 0, 8), ...ARENA],
+    code: `${BOLT_HEADER}
+long look(int angle) {
+  head.write(angle);
+  delay(600);          // give the servo time to get there
+  return distanceCm();
+}
+
+void setup() {
+${BOLT_START}
+  showFace(SMILE);
+}
+
+void loop() {
+  long ahead = look(90);
+  if (ahead < 20) {
+    drive(0, 0);
+    // TODO: look(170) and look(10), then turn toward the bigger one
+  } else {
+    drive(140, 140);
+  }
+}
+`,
+    solution: `${BOLT_HEADER}
+long look(int angle) {
+  head.write(angle);
+  delay(600);          // give the servo time to get there
+  return distanceCm();
+}
+
+void setup() {
+${BOLT_START}
+  showFace(SMILE);
+}
+
+void loop() {
+  head.write(90);
+  long ahead = distanceCm();
+  if (ahead < 20) {
+    drive(0, 0);
+    tone(VOICE, 660, 120);
+    long left = look(170);
+    long right = look(10);
+    head.write(90);
+    if (left > right) drive(-140, 140);   // more room on the left
+    else drive(140, -140);
+    delay(650);
+    drive(0, 0);
+    delay(300);
+  } else {
+    drive(140, 140);
+  }
+  delay(30);
+}
+`,
+    goals: [
+      { text: 'Look left and right when something’s in the way', check: (c, m) => { const a = boltOf(c)?.state.headAngle ?? 90; if (a > 150) m.l = true; if (a < 30) m.r = true; return seen(m, 'x', !!m.l && !!m.r); } },
+      { text: 'Stop, look and turn away 3 times', check: (c, m) => { const r = boltOf(c), a = r?.state.headAngle ?? 90; if (a > 150 && !m.up) { m.up = true; m.n = (m.n ?? 0) + 1; } if (a < 110) m.up = false; return seen(m, 'x', (m.n ?? 0) >= 3 && (r?.state.travelled ?? 0) > 30); } },
+      { text: 'Explore for 30 seconds without touching a wall', check: (c, m) => { const r = boltOf(c); return seen(m, 'x', !!r?.state.pose && c.board.time >= 30000 && (r.state.bumps ?? 0) === 0 && (r.state.travelled ?? 0) >= 60); } },
+    ],
+  },
+  {
+    id: 'bolt-moods',
+    title: 'Bolt: Moods',
+    icon: 'bolt',
+    level: 'Robotics',
+    intro: `
+<p>Robots feel friendlier when they react. Give Bolt <strong>moods</strong>: it smiles when it has space, and looks <strong>surprised</strong> with a little squeak when something comes close.</p>
+<p>Don’t squeak on every pass of <code>loop()</code>, or Bolt will never stop! Remember the current mood, and only act when it <em>changes</em>:</p>
+<pre>bool scared = d < 15;
+if (scared != wasScared) { … }   // the mood just changed
+wasScared = scared;</pre>
+<p><strong>Try it:</strong> run the sketch, then drag the yellow block right up to Bolt’s face.</p>`,
+    parts: [...boltParts('bolt-moods'), { type: 'wall', x: 0, z: -14, props: { len: '10', color: '#f2b705' } }],
+    code: `${BOLT_HEADER}
+${SURPRISED}
+void setup() {
+  Serial.begin(9600);
+${BOLT_START}
+  showFace(SMILE);
+}
+
+void loop() {
+  long d = distanceCm();
+  Serial.println(d);
+  // TODO: under 15 cm show SURPRISED and squeak once; otherwise show SMILE
+  delay(50);
+}
+`,
+    solution: `${BOLT_HEADER}
+${SURPRISED}
+bool wasScared = false;
+
+void setup() {
+  Serial.begin(9600);
+${BOLT_START}
+  showFace(SMILE);
+}
+
+void loop() {
+  long d = distanceCm();
+  Serial.println(d);
+  bool scared = d < 15;
+  if (scared != wasScared) {        // only when the mood changes
+    if (scared) {
+      showFace(SURPRISED);
+      tone(VOICE, 1500, 120);
+    } else {
+      showFace(SMILE);
+    }
+  }
+  wasScared = scared;
+  delay(50);
+}
+`,
+    goals: [
+      { text: 'Smile while there’s plenty of room', check: (c, m) => { const r = boltOf(c); if ((r?.state.distance ?? 0) > 20 && faceLit(c) >= 8) m.calm = r!.state.faceRows.join(); return seen(m, 'x', !!m.calm); } },
+      { text: 'Bring the block close: the face changes', check: (c, m) => { const r = boltOf(c); if ((r?.state.distance ?? 0) > 20 && faceLit(c) >= 8) m.calm = r!.state.faceRows.join(); return seen(m, 'x', !!m.calm && (r?.state.distance ?? 99) < 15 && faceLit(c) >= 4 && r!.state.faceRows.join() !== m.calm); } },
+      { text: 'Squeak when it’s surprised', check: (c, m) => seen(m, 'x', (boltOf(c)?.state.distance ?? 99) < 15 && !!boltOf(c)?.state.freq) },
+    ],
+  },
+);
+
 const ORDER = [
   'blink', 'circuit', 'breadboard', 'fade', 'chaser', 'rgb', 'serial',
   'seg7', 'scoreboard', 'lcd', 'oled', 'matrix', 'neopixel',
   'button', 'millis', 'interrupts', 'pot', 'encoder', 'joystick', 'remote', 'nightlight', 'sound', 'morse', 'clap', 'distance',
   'servo', 'stepper', 'motor', 'relay',
   'bug-pinmode', 'bug-wiring', 'bug-button', 'bug-array', 'bug-compare',
+  'bolt-hello', 'bolt-moods', 'bolt-follow', 'bolt-scan',
   'robot-drive', 'bumper-bot', 'phone-robot', 'odometry', 'line-follow', 'patrol', 'avoider', 'light-seeker', 'arm-pick',
   'thermo', 'weather', 'plant', 'smoke', 'motion', 'lock', 'parking', 'phone', 'logger',
 ];

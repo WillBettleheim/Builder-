@@ -50,6 +50,7 @@ const SHOPPING: Record<string, { item: string; extras?: string[] }> = {
   encoders: { item: '2× LM393 speed sensor modules with 20-slot encoder discs' },
   lighteyes: { item: '2× LDR light sensor modules', extras: ['Small bracket to angle them apart'] },
   beacon: { item: 'Torch or small desk lamp' },
+  bolt: { item: 'Mini 2WD robot kit with 2 gear motors', extras: ['L298N motor driver', 'SG90 micro servo (head)', 'HC-SR04 ultrasonic sensor (eyes)', '8×8 LED matrix with MAX7219 (face)', 'Passive buzzer (voice)', '4×AA battery holder'] },
 };
 
 const COLOR_NAMES: Record<string, string> = {
