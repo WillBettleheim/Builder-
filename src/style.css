@@ -921,3 +921,52 @@ body.instructor-on .guide { max-height: calc(100% - 40px); }
 .move-rot { display: flex; gap: 5px; }
 .move-rot .mini { font-size: 14px; padding: 2px 9px; }
 #compass svg { width: 19px; height: 19px; transition: transform 0.12s linear; }
+
+/* ================= smoother, tidier interface ================= */
+/* no live blur: over a moving 3D view the browser would have to re-blur it every frame */
+.card, .top, .tray, .scene-tools, .status, .guide, .inspector, .modal-backdrop { backdrop-filter: none; }
+.top, .tray { background: var(--paper); }
+.guide, .inspector { background: var(--card); }
+.scene-tools, .status { background: var(--card); }
+.modal-backdrop { background: rgba(10, 10, 12, 0.66); }
+
+/* the status pill sits top centre, clear of Nova and the toolbar */
+.status, body.instructor-on .status { left: 50%; right: auto; top: 10px; bottom: auto; transform: translateX(-50%); z-index: 4; white-space: nowrap; }
+
+/* keyboard focus is always visible */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.seg button:focus-visible, .scene-tools button:focus-visible { outline-offset: -2px; }
+
+/* slim scrollbars everywhere */
+* { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--ink-3) 55%, transparent) transparent; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--ink-3) 45%, transparent); border-radius: 8px; }
+::-webkit-scrollbar-thumb:hover { background: var(--ink-3); }
+
+/* the part panel: description clamps so the controls stay in view */
+.i-blurb { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.inspector { overflow-y: auto; }
+.inspector .move-box { margin-top: 10px; }
+
+/* quick, GPU-cheap entrances for things that pop up */
+@keyframes pop-in { from { opacity: 0; transform: translateY(6px); } }
+.inspector:not([hidden]), .meter:not([hidden]), .phone:not([hidden]), .schematic-pop:not([hidden]) { animation: pop-in 0.14s ease-out; }
+.view-pop:not([hidden]) { animation: view-in 0.14s ease-out; }
+@keyframes view-in { from { opacity: 0; transform: translate(-50%, 6px); } }
+
+/* buttons answer the pointer */
+.scene-tools button { transition: background 0.12s, color 0.12s; }
+.scene-tools button:active:not(:disabled) svg { transform: scale(0.88); }
+.tray-card { transition: transform 0.12s, border-color 0.12s; }
+.tray-card:hover { transform: translateY(-2px); border-color: var(--accent); }
+.mini { transition: background 0.12s, border-color 0.12s, transform 0.06s; }
+.mini:active:not(:disabled) { transform: translateY(1px); }
+
+/* the header never wraps its tagline */
+.brand span { white-space: nowrap; }
+@media (max-width: 1240px) { .brand span { display: none; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .inspector, .meter, .phone, .schematic-pop, .view-pop { animation: none !important; }
+  .tray-card:hover { transform: none; }
+}
