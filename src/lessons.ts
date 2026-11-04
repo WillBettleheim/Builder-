@@ -2249,11 +2249,11 @@ void loop() {
 const HUNT_METHOD = `
 <p class="hunt-steps"><strong>How bug hunters work:</strong> ① read the bug report ② press <strong>Run</strong> and watch closely ③ guess the cause ④ change <em>one</em> thing and run again.</p>`;
 
-/** Longest stretch (ms of wall time) a condition has held, tracked in goal memory. */
+/** How long (ms of sketch time, so it means the same at any speed) a condition has held. */
 function heldFor(c: GoalCtx, m: Record<string, any>, key: string, cond: boolean): number {
   if (!cond) { m[key] = null; return 0; }
-  m[key] ??= c.now;
-  return c.now - m[key];
+  m[key] ??= c.board.time;
+  return c.board.time - m[key];
 }
 
 LESSONS.push(
