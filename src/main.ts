@@ -9,6 +9,7 @@ import { measure, type MeterMode } from './sim/meter';
 import { liveSchematic, renderSchematic } from './ui/schematic';
 import { BoardView } from './ui/boardview';
 import { pack, unpack } from './ui/codec';
+import { MAX_CODE, cleanCode, cleanPartList, cleanWireList, escapeHtml, isHexColor, isSafeId } from './sim/sanitize';
 import { classCsv, dashboardHtml, importReports, inviteLink, loadTeacher, newClassCode, readInvite, reportLink, saveTeacher, type LessonRef, type Report } from './ui/teacher';
 import { WIRE_COLORS, autoWires, endpoint, endpointLabel, nearestGround, newWireId, type Wire } from './sim/circuit';
 import { CodeEditor } from './ui/editor';
@@ -100,7 +101,7 @@ const world = new World(stage);
 const editor = new CodeEditor($('editor'));
 const nova = new Instructor(stage);
 nova.usePhotos('./nova'); // realistic renders, if public/nova/*.png are present
-const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const esc = escapeHtml;
 
 let mode: 'lessons' | 'sandbox' = saved.mode;
 let lesson: Lesson = LESSONS.find(l => l.id === saved.lessonId) ?? LESSONS[0];
@@ -142,8 +143,12 @@ function loadParts(parts: (SavedPart | PartSpec)[], wires?: Wire[], idPrefix?: s
   world.clear();
   world.probe.red = world.probe.black = null; // probes don't carry over to another scene
   parts.forEach((s, i) => {
-    if (!PARTS[s.type]) return;
-    world.addPart(newPart(s.type, { ...s, id: (s as SavedPart).id ?? (idPrefix ? `${idPrefix}-${i}` : undefined), locked: s.type === 'uno' || (s as SavedPart).locked }));
+    if (!s || typeof s.type !== 'string' || !Object.hasOwn(PARTS, s.type)) return;
+    // saves come back from localStorage, which other pages on the same site can write
+    const [c] = cleanPartList([s]);
+    if (!c) return;
+    const id = isSafeId((s as SavedPart).id) ? (s as SavedPart).id : idPrefix ? `${idPrefix}-${i}` : undefined;
+    world.addPart(newPart(s.type, { ...c, id, locked: s.type === 'uno' || (s as SavedPart).locked === true }));
   });
   world.settleMounted();
   lastWireCount = (wires ?? []).length;
@@ -1313,18 +1318,14 @@ function timeAgo(t: number): string {
 
 // ---------- share by link ----------
 /** Keep only known parts from a shared link or imported file, with sane numbers. */
-const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
-const cleanParts = (list: any[]): SavedPart[] => {
-  const parts = list
-    .filter(p => p && typeof p.type === 'string' && PARTS[p.type])
-    .map(p => ({ ...p, x: num(p.x), z: num(p.z), rot: num(p.rot) & 3, pins: p.pins && typeof p.pins === 'object' ? p.pins : {}, props: p.props && typeof p.props === 'object' ? p.props : {} }));
+const cleanParts = (list: unknown): SavedPart[] => {
+  const parts: SavedPart[] = cleanPartList(list).map(p => ({ ...p, locked: undefined }));
   if (!parts.some(p => p.type === 'uno')) parts.unshift(DEFAULT_SANDBOX.parts[0]);
   return parts;
 };
 
 /** Keep only well-formed wires from a shared link or imported file. */
-const cleanWires = (w: unknown): Wire[] | undefined =>
-  Array.isArray(w) ? w.filter((x: any) => x && typeof x.a === 'string' && typeof x.b === 'string').map((x: any) => ({ id: typeof x.id === 'string' ? x.id : newWireId(), a: x.a, b: x.b, color: typeof x.color === 'string' ? x.color : '#3b82c4' })) : undefined;
+const cleanWires = (w: unknown): Wire[] | undefined => cleanWireList(w, newWireId);
 
 async function shareProject() {
   snapshotScene();
@@ -1515,7 +1516,7 @@ function renderWireInspector(w: Wire) {
   const colors = [...WIRE_COLORS, '#d7263d', '#2a2a2e', '#f4f1ea'];
   inspectorEl.innerHTML = `
     <div class="i-head wire-head">
-      <span class="wire-swatch" style="background:${w.color}"></span>
+      <span class="wire-swatch" style="background:${isHexColor(w.color) ? w.color : '#3b82c4'}"></span>
       <div><h3>Wire</h3><p>${esc(endpointLabel(world.parts, w.a))}<br>→ ${esc(endpointLabel(world.parts, w.b))}</p></div>
       <button class="mini ghost" data-act="close" aria-label="Close">×</button>
     </div>
