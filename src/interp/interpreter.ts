@@ -50,6 +50,8 @@ export interface Host {
   /** the files on an SD card whose CS pin is this one, or null when no card answers */
   sdCard(cs: number): Record<string, string> | null;
   digitsUpdate(key: string, state: { segs: number[]; brightness: number; on: boolean }): void;
+  /** heading from a compass module, in degrees clockwise from north, or null when none answers */
+  compassAzimuth(): number | null;
 }
 
 export interface LcdState { addr: number; cols: number; rows: number; lines: string[]; cx: number; cy: number; backlight: boolean; begun: boolean; display: boolean }
@@ -80,7 +82,7 @@ const SEG_MINUS = 0x40;
 interface Stream { name: string; write(text: string): void; available(): number; read(): number }
 const FLOAT_CONSTANTS = new Set(['PI', 'HALF_PI', 'TWO_PI', 'DEG_TO_RAD', 'RAD_TO_DEG']);
 const FLOAT_FUNCS = new Set(['sqrt', 'pow', 'sin', 'cos', 'tan', 'atan', 'atan2', 'asin', 'acos', 'exp', 'log', 'log10', 'floor', 'ceil', 'fabs', 'radians', 'degrees', 'sq']);
-const SIZES: Record<string, number> = { int: 2, uint: 2, long: 4, ulong: 4, float: 4, bool: 1, byte: 1, char: 1, String: 6, Servo: 3, LCD: 4, NeoPixel: 20, DHT: 4, OLED: 8, Stepper: 12, Keypad: 16, Matrix: 12, SoftSerial: 8, File: 16, Digits: 8 };
+const SIZES: Record<string, number> = { int: 2, uint: 2, long: 4, ulong: 4, float: 4, bool: 1, byte: 1, char: 1, String: 6, Servo: 3, LCD: 4, NeoPixel: 20, DHT: 4, OLED: 8, Stepper: 12, Keypad: 16, Matrix: 12, SoftSerial: 8, File: 16, Digits: 8, Compass: 8 };
 
 const STATEMENT_COST_MS = 0.004; // ~4µs per statement, roughly a 16 MHz AVR
 const STEP_BUDGET = 40000; // max statements per animation frame
@@ -299,7 +301,7 @@ export class Interpreter {
 
   private *declareVar(type: string, d: Node): Gen<void> {
     if (type === 'void') throw new RuntimeError('Variables cannot have type void', d.line);
-    if (['Servo', 'LCD', 'NeoPixel', 'DHT', 'OLED', 'Stepper', 'Keypad', 'Matrix', 'SoftSerial', 'Digits'].includes(type)) {
+    if (['Servo', 'LCD', 'NeoPixel', 'DHT', 'OLED', 'Stepper', 'Keypad', 'Matrix', 'SoftSerial', 'Digits', 'Compass'].includes(type)) {
       if (d.isArray) throw new RuntimeError(`Arrays of ${type} objects are not supported`, d.line);
       // "Keypad k = Keypad(...)" is the same as "Keypad k(...)"
       let ctor: Node[] = d.ctorArgs ?? [];
@@ -372,6 +374,7 @@ export class Interpreter {
       if (args.length !== 2) throw new RuntimeError('Create it with its two pins: SoftwareSerial bt(10, 11); // RX, TX', d.line);
       return { rx: args[0], tx: args[1], begun: false };
     }
+    if (type === 'Compass') return { begun: false, az: 0 };
     if (type === 'Digits') {
       if (args.length !== 2) throw new RuntimeError('Create it with its two pins: TM1637Display display(CLK, DIO);', d.line);
       return { key: `${args[0]},${args[1]}`, segs: [0, 0, 0, 0], brightness: 7, on: true };
@@ -1173,6 +1176,27 @@ export class Interpreter {
       }, prop, args, n);
     }
     if (v.type === 'Digits') return this.digitsCall(v.value, prop, args, n);
+    if (v.type === 'Compass') {
+      const c = v.value;
+      switch (prop) {
+        case 'init': c.begun = true; return;
+        case 'read': {
+          if (!c.begun) this.host.hint('compassinit', `Call ${obj.name}.init() in setup() before reading the compass.`);
+          const h = this.host.compassAzimuth();
+          if (h == null) this.host.hint('compassnone', 'No compass answered. Wire its SDA to A4, SCL to A5, and VCC and GND.');
+          else c.az = h;
+          return;
+        }
+        case 'getAzimuth': return Math.round(c.az) % 360;
+        // the field it measured, as if the Earth's pull were 1000 units strong
+        case 'getX': return Math.round(Math.cos((c.az * Math.PI) / 180) * 1000);
+        case 'getY': return Math.round(-Math.sin((c.az * Math.PI) / 180) * 1000);
+        case 'getZ': return -400;
+        case 'getBearing': return Math.round((((args[0] ?? c.az) % 360) + 360) % 360 / 22.5) % 16;
+        case 'setCalibration': case 'setCalibrationOffsets': case 'setCalibrationScales': case 'setSmoothing': case 'setADDR': case 'setMode': case 'setReset': return;
+      }
+      throw new RuntimeError(`The compass has no method "${prop}()". Use init(), read() and getAzimuth()`, n.line);
+    }
     if (v.type === 'Keypad') {
       const k = v.value;
       if (prop !== 'getKey') throw new RuntimeError(`The keypad has no method "${prop}()". Use keypad.getKey()`, n.line);

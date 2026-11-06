@@ -119,6 +119,9 @@ export const DOCS: Record<string, Doc> = {
   'Digits.setBrightness': { sig: 'display.setBrightness(0–7)', doc: 'How bright the digits glow. 7 is brightest.' },
   'Digits.showNumberDec': { sig: 'display.showNumberDec(number [, leadingZeros])', doc: 'Show a number from -999 to 9999. showNumberDec(7, true) shows 0007.' },
   'Digits.showNumberDecEx': { sig: 'display.showNumberDecEx(number, 0b01000000, leadingZeros)', doc: 'Like showNumberDec, with dots: 0b01000000 lights the colon, great for clocks.' },
+  'Compass.init': { sig: 'compass.init()', doc: 'Start the compass. Call once in setup().' },
+  'Compass.read': { sig: 'compass.read()', doc: 'Take a fresh measurement. Call it before getAzimuth().' },
+  'Compass.getAzimuth': { sig: 'compass.getAzimuth() → 0–359', doc: 'Which way it points, in degrees: 0 north, 90 east, 180 south, 270 west.' },
   'Digits.clear': { sig: 'display.clear()', doc: 'Blank all four digits.' },
   'Digits.setSegments': { sig: 'display.setSegments(data [, length, position])', doc: 'Light exact segments: each byte is SEG_A … SEG_G added together.' },
 };
@@ -131,14 +134,14 @@ const CONST_DOCS: Record<string, string> = {
 };
 for (const [k, v] of Object.entries(CONST_DOCS)) DOCS[k] = { sig: k, doc: v, kind: 'const' };
 
-const TYPES = ['int', 'long', 'unsigned long', 'float', 'bool', 'byte', 'char', 'String', 'void', 'const', 'volatile', 'Servo', 'LiquidCrystal_I2C', 'Adafruit_NeoPixel', 'DHT', 'Adafruit_SSD1306', 'Stepper', 'Keypad', 'LedControl', 'SoftwareSerial', 'File', 'TM1637Display'];
+const TYPES = ['int', 'long', 'unsigned long', 'float', 'bool', 'byte', 'char', 'String', 'void', 'const', 'volatile', 'Servo', 'LiquidCrystal_I2C', 'Adafruit_NeoPixel', 'DHT', 'Adafruit_SSD1306', 'Stepper', 'Keypad', 'LedControl', 'SoftwareSerial', 'File', 'TM1637Display', 'QMC5883LCompass'];
 const KEYWORDS = ['if', 'else', 'for', 'while', 'do', 'switch', 'case', 'break', 'continue', 'return', 'default'];
 export const PLAIN_WORDS = [...TYPES, ...KEYWORDS];
 
 /** Object kind for a variable, found by scanning its declaration. */
 export function objectKind(code: string, name: string): string | null {
   if (name === 'Serial' || name === 'SD' || name === 'IrReceiver') return name;
-  const m = code.match(new RegExp(`\\b(Servo|LiquidCrystal_I2C|Adafruit_NeoPixel|DHT|Adafruit_SSD1306|Stepper|Keypad|LedControl|SoftwareSerial|File|TM1637Display|String)\\s+${name}\\b`));
+  const m = code.match(new RegExp(`\\b(Servo|LiquidCrystal_I2C|Adafruit_NeoPixel|DHT|Adafruit_SSD1306|Stepper|Keypad|LedControl|SoftwareSerial|File|TM1637Display|QMC5883LCompass|String)\\s+${name}\\b`));
   if (!m) return null;
-  return { Servo: 'Servo', LiquidCrystal_I2C: 'LCD', Adafruit_NeoPixel: 'NeoPixel', DHT: 'DHT', Adafruit_SSD1306: 'OLED', Stepper: 'Stepper', Keypad: 'Keypad', LedControl: 'Matrix', SoftwareSerial: 'SoftSerial', File: 'File', TM1637Display: 'Digits', String: 'String' }[m[1]] ?? null;
+  return { Servo: 'Servo', LiquidCrystal_I2C: 'LCD', Adafruit_NeoPixel: 'NeoPixel', DHT: 'DHT', Adafruit_SSD1306: 'OLED', Stepper: 'Stepper', Keypad: 'Keypad', LedControl: 'Matrix', SoftwareSerial: 'SoftSerial', File: 'File', TM1637Display: 'Digits', QMC5883LCompass: 'Compass', String: 'String' }[m[1]] ?? null;
 }

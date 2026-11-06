@@ -63,3 +63,12 @@ describe('TM1637 4-digit display', () => {
     expect(show('display.showNumberDecEx(1230, 0b01000000, true);')).toBe('12:30');
   });
 });
+
+describe('QMC5883L compass library', () => {
+  it('reads the heading from the compass module', () => {
+    const board = new Board();
+    board.listeners.push({ heading: () => 90 });
+    const { serial } = runSketch(sketch('Serial.begin(9600); compass.init(); compass.read(); Serial.println(compass.getAzimuth()); Serial.println(compass.getBearing(compass.getAzimuth()));', '', '#include <QMC5883LCompass.h>\nQMC5883LCompass compass;'), 50, board);
+    expect(serial.trim().split('\n')).toEqual(['90', '4']);
+  });
+});
