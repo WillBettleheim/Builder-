@@ -1354,7 +1354,7 @@ async function openSharedFromUrl(): Promise<boolean> {
     const d = await unpack(m[1]);
     if (typeof d.code !== 'string' || !Array.isArray(d.parts)) throw new Error('bad link');
     const parts = cleanParts(d.parts);
-    createProject(`${String(d.name ?? 'Shared project').slice(0, 50)} (shared)`, { code: d.code, parts, wires: cleanWires(d.wires) });
+    createProject(`${String(d.name ?? 'Shared project').slice(0, 50)} (shared)`, { code: cleanCode(d.code), parts, wires: cleanWires(d.wires) });
     toast('Opened a shared project. It’s your own copy, so change anything you like.', 'good', 6000);
     return true;
   } catch {
@@ -1392,7 +1392,9 @@ function importProject() {
       const data = JSON.parse(await file.text());
       if (typeof data.code !== 'string' || !Array.isArray(data.parts)) throw new Error('bad file');
       const parts = cleanParts(data.parts);
-      createProject(typeof data.name === 'string' ? data.name : file.name.replace(/\.json$/i, ''), { code: data.code, parts, wires: cleanWires(data.wires) });
+    // a real project is a few KB; refuse anything big enough to freeze the tab
+    if (file.size > 2_000_000) { toast('That file is too big to be a Builder project.', 'error'); return; }
+      createProject((typeof data.name === 'string' ? data.name : file.name.replace(/\.json$/i, '')).slice(0, 50), { code: cleanCode(data.code), parts, wires: cleanWires(data.wires) });
       toast(`Imported <b>${esc(file.name)}</b>`, 'good', 3000);
     } catch {
       toast('That file isn’t a Builder project.', 'error');
