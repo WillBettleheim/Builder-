@@ -874,6 +874,7 @@ export class World {
         btInbox: l.btInbox && (rx => (on() ? l.btInbox!(rx) : undefined)),
         btSend: l.btSend && ((tx, text) => on() && l.btSend!(tx, text)),
         sd: l.sd && ((cs, b) => (on() ? l.sd!(cs, b) : undefined)),
+        heading: l.heading && (b => (on() ? l.heading!(b) : undefined)),
       };
       return [gated];
     });

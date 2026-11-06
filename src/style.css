@@ -970,3 +970,5 @@ body.instructor-on .guide { max-height: calc(100% - 40px); }
   .inspector, .meter, .phone, .schematic-pop, .view-pop { animation: none !important; }
   .tray-card:hover { transform: none; }
 }
+
+.swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -2px; margin-left: 4px; border: 1px solid var(--line-2); }

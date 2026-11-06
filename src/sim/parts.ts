@@ -2756,8 +2756,9 @@ const robotArm: PartDef = {
 const cube: PartDef = {
   type: 'cube',
   name: 'Cube',
-  blurb: 'A small block for the robot arm to pick up and move.',
+  blurb: 'A small block for a robot arm or a gripper to pick up and move.',
   noPins: true,
+  flat: true, // small enough that a gripper can close around it instead of bumping into it
   defaults: { color: '#e2533b' },
   props: [{ key: 'color', label: 'Color', type: 'select', options: [{ value: '#e2533b', label: 'Red' }, { value: '#3b82c4', label: 'Blue' }, { value: '#3fae5a', label: 'Green' }, { value: '#f2b705', label: 'Yellow' }] }],
   terminals: () => [],
@@ -2773,20 +2774,35 @@ const cube: PartDef = {
   },
 };
 
+/** Pad colours, and the colour a floor sensor sees on each. */
+export const PAD_COLORS: Record<string, { label: string; ink: string; floor: [number, number, number] }> = {
+  teal: { label: 'Teal (drop here)', ink: '#1f9e95', floor: [0.82, 0.93, 0.92] },
+  red: { label: 'Red', ink: '#d93a2e', floor: [0.86, 0.18, 0.14] },
+  green: { label: 'Green', ink: '#2e9e4a', floor: [0.2, 0.68, 0.28] },
+  blue: { label: 'Blue', ink: '#2f6fd6', floor: [0.16, 0.36, 0.86] },
+  yellow: { label: 'Yellow', ink: '#e0a800', floor: [0.95, 0.82, 0.12] },
+};
+
 const pad: PartDef = {
   type: 'pad',
   name: 'Target Pad',
-  blurb: 'A marked square to drop cubes on.',
+  blurb: 'A coloured square to drop cubes on, or for a colour sensor to find. Parts and robots can go over it.',
   noPins: true,
   flat: true,
+  defaults: { color: 'teal' },
+  props: [{ key: 'color', label: 'Colour', type: 'select', options: Object.entries(PAD_COLORS).map(([value, c]) => ({ value, label: c.label })) }],
   terminals: () => [],
-  build() {
+  build(part) {
     const g = new THREE.Group();
-    const m = new THREE.Mesh(new THREE.PlaneGeometry(6, 6), new THREE.MeshStandardMaterial({ map: textTexture([{ text: 'DROP', x: 128, y: 112, size: 46, color: '#1f9e95', weight: '700' }, { text: 'HERE', x: 128, y: 160, size: 46, color: '#1f9e95', weight: '700' }], 256, 256, '#dff3f1'), roughness: 0.8 }));
+    const c = PAD_COLORS[part.props.color] ?? PAD_COLORS.teal;
+    const teal = part.props.color === 'teal' || !PAD_COLORS[part.props.color];
+    const bg = teal ? '#dff3f1' : `rgb(${c.floor.map(v => Math.round(v * 255)).join(',')})`;
+    const text = teal ? [{ text: 'DROP', x: 128, y: 112, size: 46, color: c.ink, weight: '700' }, { text: 'HERE', x: 128, y: 160, size: 46, color: c.ink, weight: '700' }] : [];
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(6, 6), new THREE.MeshStandardMaterial({ map: textTexture(text, 256, 256, bg), roughness: 0.8 }));
     m.rotation.x = -Math.PI / 2;
     m.position.y = 0.05;
     g.add(m);
-    const ring = new THREE.Mesh(new THREE.RingGeometry(2.7, 3.0, 4, 1, Math.PI / 4), new THREE.MeshBasicMaterial({ color: '#1f9e95' }));
+    const ring = new THREE.Mesh(new THREE.RingGeometry(2.7, 3.0, 4, 1, Math.PI / 4), new THREE.MeshBasicMaterial({ color: teal ? c.ink : '#ffffff' }));
     ring.rotation.x = -Math.PI / 2;
     ring.position.y = 0.06;
     ring.scale.setScalar(1.41);
@@ -3206,15 +3222,177 @@ const bolt: PartDef = {
   },
 };
 
+// ---------- more robot add-ons: a gripper, a compass and a floor colour sensor ----------
+const gripper: PartDef = {
+  type: 'gripper',
+  name: 'Servo Gripper',
+  blurb: 'Two jaws on a servo, for the front of a robot. Below 40° the jaws close and grab a cube in reach; above 70° they open and let go. Use the Servo library.',
+  terminals: () => [
+    { key: 'sig', label: 'Servo signal', kind: 'signal', pwm: true, pos: [row(3, 0, 0.42), 0.62, 1.2] },
+    { key: 'vcc', label: 'VCC', kind: '5V', pos: [row(3, 1, 0.42), 0.62, 1.2] },
+    { key: 'gnd', label: 'GND', kind: 'GND', pos: [row(3, 2, 0.42), 0.62, 1.2] },
+  ],
+  build() {
+    const g = new THREE.Group();
+    const frame = mat('#2a2c33', { roughness: 0.5 });
+    g.add(at(box(3.2, 0.14, 2.4, mat('#1d4fa0'), 0.04), 0, 0.5, 0.5));
+    for (let i = 0; i < 3; i++) g.add(at(cyl(0.035, 0.035, 0.3, M.gold, 6), row(3, i, 0.42), 0.66, 1.2));
+    g.add(at(box(2.2, 1.1, 1.2, M.servoBlue, 0.1), 0, 1.1, -0.2)); // the servo
+    // jaws reach forward and down to cube height in front of the robot
+    const jaws: THREE.Group[] = [];
+    for (const side of [-1, 1]) {
+      const j = new THREE.Group();
+      j.position.set(side * 0.9, 0.9, -0.9);
+      j.add(at(box(0.3, 0.3, 2.8, frame, 0.06), 0, 0, -1.4));
+      j.add(at(box(0.3, 3.4, 0.3, frame, 0.06), 0, -1.7, -2.8));
+      j.add(at(box(0.6, 1.2, 0.9, mat('#e2533b', { roughness: 0.6 }), 0.08), side * -0.15, -3.0, -2.8)); // rubber pad
+      g.add(j);
+      jaws.push(j);
+    }
+    const tip = new THREE.Object3D();
+    tip.position.set(0, -2.6, -3.7);
+    g.add(tip);
+    g.userData.gripper = { jaws, tip };
+    return g;
+  },
+  update(part, board, ctx) {
+    const u = part.group!.userData.gripper;
+    const st = part.state;
+    const want = ctx.running && part.pins.sig != null ? board.servoAngles.get(part.pins.sig) ?? 90 : st.angle ?? 90;
+    const cur = st.angle ?? 90;
+    st.angle = cur + Math.max(-300 * ctx.simDt, Math.min(300 * ctx.simDt, want - cur));
+    const open = Math.max(0, Math.min(1, (st.angle - 30) / 60));
+    u.jaws.forEach((j: THREE.Group, i: number) => { j.position.x = (i ? 1 : -1) * (0.55 + open * 0.9); });
+    // grab a cube between the jaws as they close; drop it as they open
+    const closed = st.angle < 40;
+    const tip: THREE.Vector3 = u.tip.getWorldPosition(new THREE.Vector3());
+    if (closed && !st.wasClosed && !st.holding) {
+      const c = ctx.parts.find(p => p.type === 'cube' && !p.state.heldBy && p.group && Math.hypot(p.group.position.x - tip.x, p.group.position.z - tip.z) < 2.2);
+      if (c) { c.state.heldBy = part.id; st.holding = c.id; ctx.audio.click(); }
+    }
+    if (!closed && st.holding) {
+      const c = ctx.parts.find(p => p.id === st.holding);
+      if (c) delete c.state.heldBy;
+      st.holding = null;
+    }
+    st.wasClosed = closed;
+    const held = st.holding && ctx.parts.find(p => p.id === st.holding);
+    if (held?.group) {
+      held.x = tip.x;
+      held.z = tip.z;
+      held.group.position.set(tip.x, Math.max(0, tip.y - 0.4), tip.z); // lifted just off the floor
+      held.group.rotation.y = part.group!.rotation.y;
+      held.group.updateMatrixWorld(true);
+    }
+  },
+  readout: part => `Jaws <b>${Math.round(part.state.angle ?? 90)}°</b> (${(part.state.angle ?? 90) < 40 ? 'closed' : (part.state.angle ?? 90) > 70 ? 'open' : 'half open'})${part.state.holding ? ' · <b>holding a cube</b>' : ''}`,
+};
+
+const compassModule: PartDef = {
+  type: 'compass',
+  name: 'Compass Module (QMC5883L)',
+  blurb: 'Senses the Earth’s magnetic field to tell which way it points: 0° north, 90° east, 180° south, 270° west. Wire SDA to A4 and SCL to A5, then use the QMC5883LCompass library: compass.init(), compass.read(), compass.getAzimuth(). Mount it on a robot to know its heading.',
+  terminals: () => [
+    { key: 'vcc', label: 'VCC', kind: '5V', pos: [row(4, 0, 0.42), 0.62, 0.75] },
+    { key: 'gnd', label: 'GND', kind: 'GND', pos: [row(4, 1, 0.42), 0.62, 0.75] },
+    { key: 'scl', label: 'SCL', kind: 'signal', analog: true, pos: [row(4, 2, 0.42), 0.62, 0.75] },
+    { key: 'sda', label: 'SDA', kind: 'signal', analog: true, pos: [row(4, 3, 0.42), 0.62, 0.75] },
+  ],
+  build() {
+    const g = new THREE.Group();
+    g.add(at(box(2.0, 0.12, 2.0, mat('#7a2fb5'), 0.04), 0, 0.5, 0));
+    for (let i = 0; i < 4; i++) g.add(at(cyl(0.035, 0.035, 0.3, M.gold, 6), row(4, i, 0.42), 0.66, 0.75));
+    g.add(at(box(0.5, 0.15, 0.5, M.black, 0.03), 0, 0.63, -0.2));
+    // a printed arrow shows which way it measures
+    const arrow = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.6, 3), mat('#f4f1ea'));
+    arrow.rotation.x = -Math.PI / 2;
+    arrow.position.set(0.55, 0.6, -0.4);
+    g.add(arrow);
+    return g;
+  },
+  update(part) {
+    // bearing of the way the board points (its -z), clockwise from north
+    const a = part.group!.rotation.y;
+    part.state.heading = ((((-a * 180) / Math.PI) % 360) + 360) % 360;
+  },
+  listener(part) {
+    return {
+      heading(board) {
+        if (part.pins.sda !== 18 || part.pins.scl !== 19) {
+          board.hint('compassi2c', 'The compass talks over I2C: wire SDA to A4 and SCL to A5.');
+          return undefined;
+        }
+        return part.state.heading;
+      },
+    };
+  },
+  readout: part => `Heading <b>${Math.round(part.state.heading ?? 0)}°</b>`,
+};
+
+/** What the floor looks like at a point on the desk, as red, green and blue from 0 to 1. */
+function floorColor(parts: Part[], x: number, z: number): [number, number, number] {
+  // flat things on the desk: newest on top
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const p = parts[i];
+    if (!p.group || (p.type !== 'pad' && p.type !== 'track')) continue;
+    const l = p.group.worldToLocal(new THREE.Vector3(x, 0, z));
+    if (p.type === 'pad' && Math.abs(l.x) <= 3 && Math.abs(l.z) <= 3) return (PAD_COLORS[p.props.color] ?? PAD_COLORS.teal).floor;
+    if (p.type === 'track' && Math.abs(l.x) <= TRACK.w / 2 && Math.abs(l.z) <= TRACK.d / 2) return onTrackLine(l.x, l.z) ? [0.06, 0.06, 0.07] : [0.95, 0.94, 0.92];
+  }
+  // the green cutting mat, or the wooden desk around it
+  return Math.abs(x - 12) < 55 && Math.abs(z - 2) < 38 ? [0.14, 0.38, 0.3] : [0.56, 0.4, 0.27];
+}
+
+const colorSensor: PartDef = {
+  type: 'colorsensor',
+  name: 'Floor Colour Sensor',
+  blurb: 'Shines white light down and measures how much red, green and blue bounces back. analogRead() on R, G and B gives 0–1023 each. Mount it under the front of a robot to tell coloured pads apart.',
+  terminals: () => [
+    { key: 'vcc', label: 'VCC', kind: '5V', pos: [row(5, 0, 0.4), 0.62, 0.75] },
+    { key: 'gnd', label: 'GND', kind: 'GND', pos: [row(5, 1, 0.4), 0.62, 0.75] },
+    { key: 'r', label: 'R (red)', kind: 'signal', analog: true, pos: [row(5, 2, 0.4), 0.62, 0.75] },
+    { key: 'g', label: 'G (green)', kind: 'signal', analog: true, pos: [row(5, 3, 0.4), 0.62, 0.75] },
+    { key: 'b', label: 'B (blue)', kind: 'signal', analog: true, pos: [row(5, 4, 0.4), 0.62, 0.75] },
+  ],
+  build() {
+    const g = new THREE.Group();
+    g.add(at(box(2.4, 0.12, 2.0, mat('#1b1c20'), 0.04), 0, 0.5, 0));
+    for (let i = 0; i < 5; i++) g.add(at(cyl(0.035, 0.035, 0.3, M.gold, 6), row(5, i, 0.4), 0.66, 0.75));
+    g.add(at(box(0.7, 0.2, 0.7, mat('#e9e6df'), 0.04), 0, 0.36, -0.35));
+    const lamp = makeLed('#ffffff');
+    lamp.group.scale.setScalar(0.35);
+    lamp.group.rotation.x = Math.PI;
+    lamp.group.position.set(0.6, 0.45, -0.35);
+    g.add(lamp.group);
+    g.userData.lamp = lamp;
+    return g;
+  },
+  update(part, _board, ctx) {
+    const spot = part.group!.localToWorld(new THREE.Vector3(0, 0, -0.35));
+    const c = floorColor(ctx.parts, spot.x, spot.z);
+    part.state.rgb = c.map(v => Math.round(40 + v * 900));
+    setLed(part.group!.userData.lamp, ctx.running ? 0.6 : 0);
+  },
+  listener(part) {
+    return {
+      readAnalog(pin) {
+        const i = ['r', 'g', 'b'].findIndex(k => part.pins[k] === pin);
+        return i < 0 ? undefined : part.state.rgb?.[i];
+      },
+    };
+  },
+  readout: part => { const [r, g, b] = part.state.rgb ?? [0, 0, 0]; return `R <b>${r}</b> · G <b>${g}</b> · B <b>${b}</b> <span class="swatch" style="background:rgb(${[r, g, b].map(v => Math.round(((v - 40) / 900) * 255)).join(',')})"></span>`; },
+};
+
 /** Parts that point somewhere: which way along their own z axis they face. */
-export const FACES: Record<string, number> = { ultrasonic: 1, arm: 1, robot: -1, bolt: -1, irprox: -1, bumper: -1, linesensor: -1, lighteyes: -1 };
+export const FACES: Record<string, number> = { ultrasonic: 1, arm: 1, robot: -1, bolt: -1, irprox: -1, bumper: -1, linesensor: -1, lighteyes: -1, gripper: -1, compass: -1, colorsensor: -1 };
 
 export const PARTS: Record<string, PartDef> = Object.fromEntries(
-  [uno, led, rgbLed, button, pot, ldr, tmp36, buzzer, ultrasonic, servo, motor, trafficLight, car, lcd, sevenSeg, pir, joystick, neopixel, bigBreadboard, relay, dht11, oled, stepper, keypad, soil, encoder, matrix, hall, magnet, sound, gas, irRemote, bluetooth, digits, sdcard, robotCar, trackMat, lineSensor, wall, robotArm, cube, pad, bumper, irProx, encoders, lightEyes, beacon, bolt].map(d => [d.type, d]),
+  [uno, led, rgbLed, button, pot, ldr, tmp36, buzzer, ultrasonic, servo, motor, trafficLight, car, lcd, sevenSeg, pir, joystick, neopixel, bigBreadboard, relay, dht11, oled, stepper, keypad, soil, encoder, matrix, hall, magnet, sound, gas, irRemote, bluetooth, digits, sdcard, robotCar, trackMat, lineSensor, wall, robotArm, cube, pad, bumper, irProx, encoders, lightEyes, beacon, bolt, gripper, compassModule, colorSensor].map(d => [d.type, d]),
 );
 
 /** Parts shown in the sandbox palette, in order. */
-export const PALETTE = ['breadboard', 'led', 'rgb', 'button', 'keypad', 'pot', 'encoder', 'joystick', 'ldr', 'temp', 'dht', 'soil', 'gas', 'sound', 'hall', 'pir', 'buzzer', 'ultrasonic', 'servo', 'stepper', 'motor', 'relay', 'traffic', 'seg7', 'digits', 'lcd', 'oled', 'matrix', 'neopixel', 'ir', 'bluetooth', 'sdcard', 'bolt', 'robot', 'linesensor', 'irprox', 'bumper', 'encoders', 'lighteyes', 'beacon', 'arm', 'cube', 'track', 'pad', 'wall', 'magnet', 'car'];
+export const PALETTE = ['breadboard', 'led', 'rgb', 'button', 'keypad', 'pot', 'encoder', 'joystick', 'ldr', 'temp', 'dht', 'soil', 'gas', 'sound', 'hall', 'pir', 'buzzer', 'ultrasonic', 'servo', 'stepper', 'motor', 'relay', 'traffic', 'seg7', 'digits', 'lcd', 'oled', 'matrix', 'neopixel', 'ir', 'bluetooth', 'sdcard', 'bolt', 'robot', 'gripper', 'compass', 'colorsensor', 'linesensor', 'irprox', 'bumper', 'encoders', 'lighteyes', 'beacon', 'arm', 'cube', 'track', 'pad', 'wall', 'magnet', 'car'];
 
 let idCounter = 0;
 export function newPart(type: string, init: Partial<Part> = {}): Part {

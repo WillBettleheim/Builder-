@@ -30,6 +30,8 @@ export interface PinListener {
   btSend?(tx: number, text: string): boolean;
   /** SD card module: its files, when its CS pin is this one */
   sd?(cs: number, board: Board): Record<string, string> | undefined;
+  /** compass module: the heading it reads, in degrees */
+  heading?(board: Board): number | undefined;
 }
 
 export interface Transition { t: number; v: number }
@@ -222,6 +224,14 @@ export class Board implements Host {
     for (const l of this.listeners) {
       const files = l.sd?.(cs, this);
       if (files) return files;
+    }
+    return null;
+  }
+
+  compassAzimuth(): number | null {
+    for (const l of this.listeners) {
+      const h = l.heading?.(this);
+      if (h != null) return h;
     }
     return null;
   }
