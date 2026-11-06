@@ -11,7 +11,7 @@ import { BoardView } from './ui/boardview';
 import { pack, unpack } from './ui/codec';
 import { cleanSaved, type Project, type Saved, type SavedPart, type SavedScene } from './savefile';
 import { MAX_CODE, cleanCode, cleanPartList, cleanWireList, escapeHtml, isHexColor, isSafeId } from './sim/sanitize';
-import { classCsv, dashboardHtml, importReports, inviteLink, loadTeacher, newClassCode, readInvite, reportLink, saveTeacher, type LessonRef, type Report } from './ui/teacher';
+import { classCsv, dashboardHtml, importReports, inviteLink, loadTeacher, newClassCode, readInvite, readReport, reportLink, saveTeacher, type LessonRef, type Report } from './ui/teacher';
 import { WIRE_COLORS, autoWires, endpoint, endpointLabel, nearestGround, newWireId, type Wire } from './sim/circuit';
 import { CodeEditor } from './ui/editor';
 import { runTour } from './ui/tour';
@@ -559,6 +559,9 @@ $('snap').addEventListener('click', e => {
   save();
   renderSnap();
 });
+    const r = await readReport(m[2]);
+    // anyone can make a report link, so a teacher confirms each one that arrives this way
+    if (r && store.classes.some(c => c.code === r.c) && !confirm(`Add a progress report from “${r.n}” to your class? Only accept links you got from your students.`)) return;
 renderSnap();
 
 // ---------- phone app for the Bluetooth module ----------
