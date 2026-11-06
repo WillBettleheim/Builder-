@@ -8,6 +8,7 @@ import { Board } from '../sim/board';
 import { classCsv, cleanReport, readInvite } from '../ui/teacher';
 import { inSetup, runSketch } from './helpers';
 import { LESSONS } from '../lessons';
+import { cleanSaved, type Saved } from '../savefile';
 
 const XSS = '"><img src=x onerror=alert(1)>';
 
@@ -146,5 +147,41 @@ describe('sketch limits', () => {
     b2.listeners.push({ sd: cs => (cs === 10 ? f2 : undefined) });
     expect(() => runSketch(inSetup('SD.begin(10); File f = SD.open("__proto__/../x<>", FILE_WRITE);'), 50, b2)).toThrow(/file name/);
     expect(Object.hasOwn(f2, '__proto__')).toBe(false);
+  });
+});
+
+describe('sketches can’t reach JavaScript internals', () => {
+  for (const name of ['constructor', 'toString', '__proto__', 'hasOwnProperty', 'valueOf']) {
+    it(`treats "${name}" as an undeclared name`, () => {
+      expect(() => runSketch(inSetup(`Serial.println(${name});`), 30)).toThrow(/not declared/);
+    });
+  }
+});
+
+describe('teacher reports from the future', () => {
+  it('can’t block a student’s later reports with a far-future time', () => {
+    const r = cleanReport({ v: 1, c: 'ABC123', n: 'Sam', t: 9e15, done: [] })!;
+    expect(r.t).toBeLessThanOrEqual(Date.now() + 86_400_000);
+  });
+});
+
+describe('poisoned saves', () => {
+  const empty = (): Saved => ({ mode: 'lessons', lessonId: 'blink', goals: {}, lessons: {}, sandbox: null, projects: [], projectId: '', muted: false, theme: 'auto', toured: false, quality: 'auto', badges: {}, quiz: {}, stats: { wires: 0 }, instructor: true });
+
+  it('falls back to defaults for every wrongly typed field instead of crashing', () => {
+    const s = cleanSaved({ mode: 'evil', projects: 'x', badges: 5, goals: null, lessons: 7, quiz: 'q', stats: null, view: 3, bestLaps: { a: 'zz' }, classroom: { code: 1 }, sideW: 'wide', snap: '<b>', projectId: { x: 1 }, lessonId: 42, theme: '<img>' }, empty(), ['blink']);
+    expect(s).toMatchObject({ mode: 'lessons', projects: [], badges: {}, goals: {}, lessons: {}, quiz: {}, stats: { wires: 0 }, bestLaps: {}, classroom: null, projectId: '', lessonId: 'blink', theme: 'auto' });
+    expect(s.sideW).toBeUndefined();
+    expect(s.snap).toBeUndefined();
+  });
+
+  it('survives junk that isn’t an object at all', () => {
+    for (const junk of [null, 5, 'x', [], true]) expect(cleanSaved(junk, empty(), ['blink']).mode).toBe('lessons');
+  });
+
+  it('keeps a normal save exactly', () => {
+    const scene = { code: 'void setup(){}', parts: [{ id: 'uno', type: 'uno', x: 0, z: 0, rot: 0, pins: {}, props: {} }], wires: [{ id: 'w1', a: 'uno:13', b: 'led1:pin', color: '#d7263d' }] };
+    const good = { ...empty(), mode: 'sandbox', goals: { blink: [true, false] }, projects: [{ id: 'p1', name: 'Car', updated: 5, scene }], projectId: 'p1', badges: { first: 3 }, quiz: { blink: { 0: { tries: 1, ok: true } } }, bestLaps: { k: 1234 }, snap: 1, sideW: 400, classroom: { code: 'ABC123', name: 'Y8', teacher: 'T', student: 'S' } };
+    expect(cleanSaved(JSON.parse(JSON.stringify(good)), empty(), ['blink'])).toMatchObject(good);
   });
 });
