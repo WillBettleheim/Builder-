@@ -7,6 +7,13 @@ import type { Wire } from '../sim/circuit';
 import { PARTS, type Part } from '../sim/parts';
 
 const name = (p: number) => (p >= 14 ? `A${p - 14}` : `${p}`);
+/** The extra job some pins do: serial, interrupts, SPI and I2C. */
+const ALT: Record<number, string> = { 0: 'RX', 1: 'TX', 2: 'INT0', 3: 'INT1', 10: 'SS', 11: 'MOSI', 12: 'MISO', 13: 'SCK', 18: 'SDA', 19: 'SCL' };
+const ALT_INFO: Record<string, string> = {
+  RX: 'serial receive (busy while Serial is on)', TX: 'serial transmit (busy while Serial is on)', INT0: 'can trigger an interrupt', INT1: 'can trigger an interrupt',
+  SS: 'SPI select', MOSI: 'SPI data out', MISO: 'SPI data in', SCK: 'SPI clock', SDA: 'I2C data', SCL: 'I2C clock',
+};
+const SPARK_W = 240, SPARK_H = 26, WINDOW_MS = 5000;
 
 // where each socket sits in the drawing (viewBox 640 × 290)
 const TOP_Y = 66, BOTTOM_Y = 228;
@@ -72,8 +79,13 @@ export interface BoardViewEvents {
 export class BoardView {
   private key = '';
   private users = new Map<number, PinUse[]>();
+  private lastCls = new Map<number, string>();
+  /** recent levels (0–1) for pins whose history isn't in the board's transition log */
+  private history = new Map<number, { t: number; v: number }[]>();
+  private activityKey = '';
 
-  constructor(private el: HTMLElement, events: BoardViewEvents = {}, private summary?: HTMLElement) {
+  /** activity: a box to fill with a live graph for every pin in use (the big view) */
+  constructor(private el: HTMLElement, events: BoardViewEvents = {}, private summary?: HTMLElement, private activity?: HTMLElement) {
     const userAt = (e: Event) => {
       const g = (e.target as Element).closest?.('[data-pin]') as SVGGElement | null;
       return g ? this.users.get(Number(g.dataset.pin))?.[0]?.part ?? null : null;
@@ -95,16 +107,27 @@ export class BoardView {
     for (const g of this.el.querySelectorAll<SVGGElement>('[data-pin]')) {
       const pin = Number(g.dataset.pin);
       const used = users.has(pin) || board.pins[pin].mode === 'OUTPUT';
-      let look = used ? pinLook(board, pin, running) : { cls: 'unused', value: '', detail: 'Not used' };
-      // only a switch can leave a pin truly floating; other parts talk over it through their library
-      if (look.cls === 'float' && users.get(pin)?.every(u => u.part.type !== 'button' && u.part.type !== 'bumper')) {
-        look = { cls: 'data', value: '', detail: 'Carries data between the board and the part' };
-      }
+      const look = used ? this.look(pin, users, board, running) : { cls: 'unused', value: '', detail: 'Not used' };
       const picked = !!selected && !!users.get(pin)?.some(u => u.part === selected);
+      // a short flash whenever the pin changes state
+      const before = this.lastCls.get(pin);
+      this.lastCls.set(pin, look.cls);
+      if (running && before && before !== look.cls && used) {
+        g.classList.remove('flash');
+        void g.getBoundingClientRect();
+        g.classList.add('flash');
+      }
+      // the ring takes the colour of the wire plugged in here, to match the desk
+      const ring = g.querySelector<SVGCircleElement>('.bv-wire');
+      const ep = `${parts.find(p => p.type === 'uno')?.id}:${pin}`;
+      const wire = wires.find(w => w.a === ep || w.b === ep);
+      const stroke = wire?.color ?? '';
+      if (ring && ring.style.stroke !== stroke) ring.style.stroke = stroke;
       const cls = `bv-pin ${look.cls}${used ? ' used' : ''}${users.has(pin) ? ' linked' : ''}${picked ? ' picked' : ''}`;
       if (used) inUse++;
       if (look.cls === 'high' || look.cls === 'pwm' || look.cls === 'tone') active++;
-      if (g.getAttribute('class') !== cls) g.setAttribute('class', cls);
+      const flashing = g.classList.contains('flash') ? ' flash' : '';
+      if (g.getAttribute('class') !== cls + flashing) g.setAttribute('class', cls + flashing);
       const val = g.querySelector('.bv-val');
       const names = users.get(pin)?.map(u => u.label).join(', ') ?? (pin === 13 && used ? 'built-in LED' : '');
       // keep the live value whole; shorten the part name to make room
@@ -113,7 +136,8 @@ export class BoardView {
       const text = look.value && nm ? `${nm} · ${look.value}` : nm || look.value;
       if (val && val.textContent !== text) val.textContent = text;
       const title = g.querySelector('title');
-      const tip = `Pin ${name(pin)}${PWM_PINS.has(pin) ? ' (~ PWM)' : ''}: ${look.detail}${names ? `. Wired to ${names}` : ''}`;
+      const alt = ALT[pin] ? ` · also ${ALT[pin]}, ${ALT_INFO[ALT[pin]]}` : '';
+      const tip = `Pin ${name(pin)}${PWM_PINS.has(pin) ? ' (~ PWM)' : ''}: ${look.detail}${names ? `. Wired to ${names}` : ''}${alt}`;
       if (title && title.textContent !== tip) title.textContent = tip;
       // PWM shows as brightness
       const dot = g.querySelector<SVGCircleElement>('.bv-dot');
@@ -137,6 +161,63 @@ export class BoardView {
       const text = `${inUse} of 20 pins in use${running ? ` · ${active} active` : ''}`;
       if (this.summary.textContent !== text) this.summary.textContent = text;
     }
+    if (this.activity) this.updateActivity(users, board, running);
+  }
+
+  /** pinLook, except that only a switch can leave a pin truly floating: other parts talk over it through their library. */
+  private look(pin: number, users: Map<number, PinUse[]>, board: Board, running: boolean): PinLook {
+    const look = pinLook(board, pin, running);
+    if (look.cls === 'float' && users.get(pin)?.every(u => u.part.type !== 'button' && u.part.type !== 'bumper')) {
+      return { cls: 'data', value: '', detail: 'Carries data between the board and the part' };
+    }
+    return look;
+  }
+
+  /** One row per pin in use: its name and a scrolling graph of the last five seconds. */
+  private updateActivity(users: Map<number, PinUse[]>, board: Board, running: boolean) {
+    const pins = [...users.keys()].sort((a, b) => a - b);
+    const key = pins.join();
+    if (key !== this.activityKey) {
+      this.activityKey = key;
+      this.activity!.innerHTML = pins.length
+        ? `<h3>Last 5 seconds</h3>${pins.map(p => `<div class="bv-act" data-act-pin="${p}"><b>${name(p)}</b><span>${users.get(p)!.map(u => u.label).join(', ')}</span><svg viewBox="0 0 ${SPARK_W} ${SPARK_H}" preserveAspectRatio="none"><polyline points=""/></svg><em></em></div>`).join('')}`
+        : '<p class="muted">Wire something to a pin to see its activity here.</p>';
+    }
+    const now = board.time;
+    for (const row of this.activity!.querySelectorAll<HTMLElement>('[data-act-pin]')) {
+      const pin = Number(row.dataset.actPin);
+      const p = board.pins[pin];
+      // plain digital outputs have an exact log of every switch; everything else is sampled
+      const logged = running && p.mode === 'OUTPUT' && p.pwm == null && board.activeTone(pin) == null && (board.transitions.get(pin)?.length ?? 0) > 0;
+      let pts: { t: number; v: number }[];
+      if (logged) {
+        const tr = board.transitions.get(pin)!;
+        const start = now - WINDOW_MS;
+        let v = 0;
+        pts = [];
+        for (const x of tr) { if (x.t <= start) v = x.v; }
+        pts.push({ t: start, v });
+        for (const x of tr) if (x.t > start) { pts.push({ t: x.t, v }); v = x.v; pts.push({ t: x.t, v }); }
+        pts.push({ t: now, v });
+      } else {
+        const h = this.history.get(pin) ?? [];
+        if (h.length && h[h.length - 1].t > now) h.length = 0; // a new run started
+        if (running) {
+          const look = this.look(pin, users, board, true);
+          const v = look.cls === 'analog' ? (board.peekAnalog(pin) ?? 0) : look.cls === 'tone' ? 0.5 : p.mode === 'OUTPUT' ? board.level(pin) : (board.peekDigital(pin) ?? 0.5);
+          h.push({ t: now, v });
+        }
+        while (h.length && h[0].t < now - WINDOW_MS) h.shift();
+        this.history.set(pin, h);
+        pts = h;
+      }
+      const line = row.querySelector('polyline')!;
+      const d = pts.map(q => `${(((q.t - (now - WINDOW_MS)) / WINDOW_MS) * SPARK_W).toFixed(1)},${(SPARK_H - 3 - q.v * (SPARK_H - 6)).toFixed(1)}`).join(' ');
+      if (line.getAttribute('points') !== d) line.setAttribute('points', d);
+      const em = row.querySelector('em')!;
+      const val = running ? this.look(pin, users, board, true).value : '';
+      if (em.textContent !== val) em.textContent = val;
+    }
   }
 
   private draw(): string {
@@ -144,8 +225,9 @@ export class BoardView {
       // tags run away from the board edge: down from the top header, up from the bottom one
       const tagY = top ? y + 18 : y - 18;
       return `<g data-pin="${pin}" class="bv-pin unused" transform="translate(${x} ${y})"><title></title>
-        <circle class="bv-halo" r="12"/><circle class="bv-dot" r="7.5"/>
+        <circle class="bv-halo" r="12"/><circle class="bv-wire" r="10.5"/><circle class="bv-dot" r="7.5"/>
         <text class="bv-num" y="${top ? -17 : 27}" text-anchor="middle">${name(pin)}${PWM_PINS.has(pin) ? '~' : ''}</text>
+        ${ALT[pin] ? `<text class="bv-alt" y="${top ? -29 : 39}" text-anchor="middle">${ALT[pin]}</text>` : ''}
         <text class="bv-val" transform="translate(0 ${tagY - y}) rotate(${top ? 90 : -90})" text-anchor="start" dy="3"></text></g>`;
     };
     const fixed = (label: string, socket: string, x: number, y: number, cls: string) =>

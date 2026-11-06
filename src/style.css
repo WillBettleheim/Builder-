@@ -984,3 +984,18 @@ body.focus-mode main { grid-template-columns: 1fr; }
 body.focus-mode .side, body.focus-mode .tray { display: none; }
 #focus-btn[aria-pressed='true'] { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
 @media (max-width: 1000px) { .side-grip { display: none; } }
+
+/* live board: wire colours, pin jobs, change flashes and activity graphs */
+.bv-pin .bv-wire { fill: none; stroke-width: 2.5; stroke: transparent; }
+.bv-alt { fill: var(--ink-3); font: 600 8.5px var(--mono); letter-spacing: 0.04em; }
+.bv-pin.used .bv-alt { fill: var(--ink-2); }
+.bv-pin.flash .bv-halo { animation: bv-flash 0.45s ease-out; }
+@keyframes bv-flash { from { fill: rgba(255, 255, 255, 0.55); } }
+.bv-activity h3 { margin: 14px 0 6px; font-size: 13px; }
+.bv-act { display: grid; grid-template-columns: 34px minmax(80px, 160px) 1fr 70px; align-items: center; gap: 10px; padding: 3px 0; border-bottom: 1px solid var(--line); font-size: 12px; }
+.bv-act b { font-family: var(--mono); }
+.bv-act span { color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bv-act svg { width: 100%; height: 26px; background: var(--paper); border-radius: 5px; }
+.bv-act polyline { fill: none; stroke: var(--accent); stroke-width: 1.6; vector-effect: non-scaling-stroke; }
+.bv-act em { font: 600 11px var(--mono); font-style: normal; text-align: right; color: var(--ink); }
+@media (prefers-reduced-motion: reduce) { .bv-pin.flash .bv-halo { animation: none; } }

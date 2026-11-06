@@ -653,8 +653,8 @@ let boardAt = 0;
 function openBigBoard() {
   $('modal-card').setAttribute('aria-label', 'Live board');
   $('modal-card').innerHTML = `<div class="bs-head"><div><div class="eyebrow">LIVE BOARD</div><h2 id="big-board-summary">Every pin, right now</h2></div><button class="mini ghost icon" data-tm="close" aria-label="Close">×</button></div>
-    <div class="bs-body"><div id="big-board" class="bv-large"></div><p class="muted">Click a pin to select the part wired to it. Numbers above 5V and GND count the wires leaving them.</p></div>`;
-  bigBoard = new BoardView($('big-board'), { ...pinEvents, onPick(part) { closeModal(); pinEvents.onPick(part); } }, $('big-board-summary'));
+    <div class="bs-body"><div id="big-board" class="bv-large"></div><p class="muted">Click a pin to select the part wired to it. Rings show the colour of the wire plugged in; numbers above 5V and GND count their wires.</p><div id="big-activity" class="bv-activity"></div></div>`;
+  bigBoard = new BoardView($('big-board'), { ...pinEvents, onPick(part) { closeModal(); pinEvents.onPick(part); } }, $('big-board-summary'), $('big-activity'));
   modal.hidden = false;
 }
 $('board-expand').onclick = openBigBoard;
