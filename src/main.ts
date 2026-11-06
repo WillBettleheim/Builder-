@@ -37,6 +37,7 @@ function load(): Saved {
     return empty;
   }
 }
+
 const saved = load();
 let saveTimer = 0;
 function save() {
@@ -63,6 +64,25 @@ const pauseBtn = $<HTMLButtonElement>('pause');
 const speedSel = $<HTMLSelectElement>('speed');
 const clockEl = $('clock');
 const statusEl = $('status');
+
+// ---------- clickjacking guard ----------
+// GitHub Pages can't send a frame-blocking header, so check in code: if another site
+// shows Builder inside a frame, cover it so hidden clicks (say, on "Delete class") can't land.
+function framedByOtherSite(): boolean {
+  if (window.top === window.self) return false;
+  try { return window.top!.location.origin !== location.origin; } catch { return true; }
+}
+if (framedByOtherSite()) {
+  const shield = document.createElement('div');
+  shield.className = 'frame-shield';
+  const a = document.createElement('a');
+  a.href = location.href.split('#')[0];
+  a.target = '_blank';
+  a.rel = 'noopener noreferrer';
+  a.textContent = 'Open Builder in its own tab';
+  shield.append(a);
+  document.body.append(shield);
+}
 
 const world = new World(stage);
 const editor = new CodeEditor($('editor'));
@@ -539,6 +559,9 @@ async function openClassLink() {
     $('modal-card').querySelector<HTMLInputElement>('input[name=student]')?.focus();
   } else {
     const store = loadTeacher();
+    const r = await readReport(m[2]);
+    // anyone can make a report link, so a teacher confirms each one that arrives this way
+    if (r && store.classes.some(c => c.code === r.c) && !confirm(`Add a progress report from “${r.n}” to your class? Only accept links you got from your students.`)) return;
     const { added } = await importReports(store, `report=${m[2]}`);
     if (!store.classes.length) toast('This is a student’s progress link. Open it on the computer where you created your class.', 'hint', 8000);
     else { toast(added ? 'Report added to your class.' : 'That report is older than one you already have, or for another class.', added ? 'good' : 'hint', 5000); void openTeacher(); }
@@ -559,9 +582,6 @@ $('snap').addEventListener('click', e => {
   save();
   renderSnap();
 });
-    const r = await readReport(m[2]);
-    // anyone can make a report link, so a teacher confirms each one that arrives this way
-    if (r && store.classes.some(c => c.code === r.c) && !confirm(`Add a progress report from “${r.n}” to your class? Only accept links you got from your students.`)) return;
 renderSnap();
 
 // ---------- phone app for the Bluetooth module ----------
