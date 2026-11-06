@@ -165,7 +165,7 @@ export class CodeEditor {
       for (const w of PLAIN_WORDS) add(w, w, w === 'Servo' || w.includes('_') ? 'library type' : 'keyword');
       // names declared in this sketch
       const declared = new Set(v.match(/\b[A-Za-z_]\w*\b/g) ?? []);
-      for (const w of declared) if (w.length > 1 && !DOCS[w]) add(w, w, 'in your code');
+      for (const w of declared) if (w.length > 1 && !Object.hasOwn(DOCS, w)) add(w, w, 'in your code');
     }
     if (!cands.length) return this.closePopup();
     this.items = cands.slice(0, 8);
@@ -225,7 +225,8 @@ export class CodeEditor {
       const kind = objectKind(this.ta.value, obj[1]);
       if (kind) key = `${kind}.${word}`;
     }
-    const doc = DOCS[key];
+    // own keys only: a word like "constructor" mustn't find Object's built-ins
+    const doc = Object.hasOwn(DOCS, key) ? DOCS[key] : undefined;
     if (!doc) return;
     const r = this.root.getBoundingClientRect();
     this.tipTimer = window.setTimeout(() => {
