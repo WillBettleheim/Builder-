@@ -3389,15 +3389,269 @@ const colorSensor: PartDef = {
   readout: part => { const [r, g, b] = part.state.rgb ?? [0, 0, 0]; return `R <b>${r}</b> · G <b>${g}</b> · B <b>${b}</b> <span class="swatch" style="background:rgb(${[r, g, b].map(v => Math.round(((v - 40) / 900) * 255)).join(',')})"></span>`; },
 };
 
+// ---------- spider, drone and robotic hand ----------
+/** Move a servo-driven joint towards the angle the sketch wrote, at about 300°/s of sketch time. */
+function servoJoint(part: Part, board: Board, key: string, dt: number, running: boolean, rate = 300): number {
+  const cur = part.state[key] ?? 90;
+  const pin = part.pins[key];
+  const want = running && pin != null ? board.servoAngles.get(pin) ?? cur : cur;
+  const next = cur + Math.max(-rate * dt, Math.min(rate * dt, want - cur));
+  part.state[key] = next;
+  return next;
+}
+
+const SPIDER = { bodyY: 4.4, reach: 5.5, feetApart: 17 };
+const SPIDER_LEGS = [['fl', -1, -1], ['fr', 1, -1], ['bl', -1, 1], ['br', 1, 1]] as const; // name, side (x), end (-1 front)
+const SPIDER_PINS = SPIDER_LEGS.flatMap(([n]) => [`${n}_hip`, `${n}_knee`]);
+
+const spider: PartDef = {
+  type: 'spider',
+  name: 'Robot Spider',
+  blurb: 'A four-legged walker with 8 servos: a hip (swings the leg forward and back) and a knee (lifts the foot) on each leg. Hip 90 points the leg out; above 90 swings it forward. Knee 90 puts the foot down; 150 lifts it. Legs on the ground push the body, so a good gait walks and a bad one shuffles.',
+  terminals: () => [
+    ...SPIDER_PINS.map((k, i) => ({ key: k, label: `${k.slice(0, 2).toUpperCase()} ${k.endsWith('hip') ? 'hip' : 'knee'}`, kind: 'signal' as const, pwm: true, pos: [row(10, i, 0.5), SPIDER.bodyY + 1.35, 4.9] as [number, number, number] })),
+    { key: 'vcc', label: 'VCC', kind: '5V', pos: [row(10, 8, 0.5), SPIDER.bodyY + 1.35, 4.9] },
+    { key: 'gnd', label: 'GND', kind: 'GND', pos: [row(10, 9, 0.5), SPIDER.bodyY + 1.35, 4.9] },
+  ],
+  deck: { minX: -4, maxX: 4, minZ: -4.4, maxZ: 4.2, y: SPIDER.bodyY + 1.25 },
+  build() {
+    const g = new THREE.Group();
+    const shell = mat('#2a2c33', { roughness: 0.45, metalness: 0.2 });
+    const accent = mat('#e2533b', { roughness: 0.5 });
+    const body = new THREE.Group();
+    body.add(at(box(9, 2.4, 10.4, shell, 0.8), 0, SPIDER.bodyY, 0));
+    body.add(at(box(9.2, 0.25, 10.6, accent, 0.1), 0, SPIDER.bodyY - 0.6, 0));
+    body.add(at(box(9.6, 0.14, 1.2, mat('#1d4fa0'), 0.03), 0, SPIDER.bodyY + 1.2, 4.9));
+    for (let i = 0; i < 10; i++) body.add(at(cyl(0.035, 0.035, 0.3, M.gold, 6), row(10, i, 0.5), SPIDER.bodyY + 1.3, 4.9));
+    // a head with two glowing eyes at the front
+    body.add(at(box(4.2, 1.8, 2, shell, 0.6), 0, SPIDER.bodyY + 0.2, -5.6));
+    const eyes: ReturnType<typeof makeLed>[] = [];
+    for (const x of [-0.9, 0.9]) {
+      const e = makeLed('#ff3b30');
+      e.group.scale.setScalar(0.4);
+      e.group.rotation.x = -Math.PI / 2;
+      e.group.position.set(x, SPIDER.bodyY + 0.4, -6.5);
+      body.add(e.group);
+      eyes.push(e);
+    }
+    g.add(body);
+    const legs: { hip: THREE.Group; knee: THREE.Group }[] = [];
+    for (const [, sx, sz] of SPIDER_LEGS) {
+      const hip = new THREE.Group();
+      hip.position.set(sx * 3.9, SPIDER.bodyY - 0.2, sz * 4);
+      hip.add(at(cyl(0.7, 0.7, 1.2, M.servoBlue, 16), 0, 0.1, 0));
+      hip.add(at(box(4.2, 0.6, 0.9, shell, 0.15), sx * 2.1, 0, 0)); // thigh, out to the side
+      const knee = new THREE.Group();
+      knee.position.set(sx * 4.2, 0, 0);
+      knee.add(at(cyl(0.55, 0.55, 1, M.servoBlue, 14).rotateX(Math.PI / 2), 0, 0, 0));
+      knee.add(at(box(0.6, SPIDER.bodyY, 0.6, shell, 0.15), sx * 0.3, -SPIDER.bodyY / 2, 0)); // shin, down to the floor
+      knee.add(at(new THREE.Mesh(new THREE.SphereGeometry(0.45, 12, 8), accent), sx * 0.3, -SPIDER.bodyY + 0.3, 0));
+      hip.add(knee);
+      g.add(hip);
+      legs.push({ hip, knee });
+    }
+    g.userData.spider = { body, legs, eyes };
+    return g;
+  },
+  locomote(part, board, dt, running) {
+    // stance feet stay planted, so whatever they sweep backwards, the body moves forwards
+    const dL: number[] = [], dR: number[] = [];
+    for (const [n, sx] of SPIDER_LEGS) {
+      const before = part.state[`${n}_hip`] ?? 90;
+      const hip = servoJoint(part, board, `${n}_hip`, dt, running);
+      const knee = servoJoint(part, board, `${n}_knee`, dt, running);
+      if (knee >= 110) continue; // foot in the air
+      const df = SPIDER.reach * (Math.sin(((hip - 90) * Math.PI) / 180) - Math.sin(((before - 90) * Math.PI) / 180));
+      (sx < 0 ? dL : dR).push(df);
+    }
+    const mean = (a: number[]) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
+    const all = [...dL, ...dR];
+    if (!all.length) return { forward: 0, side: 0, turn: 0, up: 0 };
+    const turn = dL.length && dR.length ? (mean(dL) - mean(dR)) / SPIDER.feetApart : 0;
+    return { forward: -mean(all), side: 0, turn, up: 0 };
+  },
+  update(part, _board, ctx) {
+    const u = part.group!.userData.spider;
+    let lifted = 0;
+    SPIDER_LEGS.forEach(([n, sx, sz], i) => {
+      const hip = part.state[`${n}_hip`] ?? 90, knee = part.state[`${n}_knee`] ?? 90;
+      // front legs angle forward, back legs back; the servo swings them from there
+      u.legs[i].hip.rotation.y = sx * ((sz < 0 ? 0.6 : -0.6) + ((hip - 90) * Math.PI) / 180);
+      const lift = Math.max(0, Math.min(1, (knee - 90) / 60));
+      u.legs[i].knee.rotation.z = sx * lift * 0.55;
+      if (knee >= 110) lifted++;
+    });
+    u.body.position.y = -lifted * 0.12; // the body dips a little while legs are up
+    u.eyes.forEach((e: ReturnType<typeof makeLed>) => setLed(e, ctx.running ? 0.8 : 0));
+  },
+  readout: part => {
+    const up = SPIDER_LEGS.filter(([n]) => (part.state[`${n}_knee`] ?? 90) >= 110).map(([n]) => n.toUpperCase());
+    return `Legs up: <b>${up.length ? up.join(', ') : 'none'}</b> · walked <b>${(part.state.travelled ?? 0).toFixed(0)} cm</b>`;
+  },
+};
+
+const drone: PartDef = {
+  type: 'drone',
+  name: 'Drone (quadcopter)',
+  blurb: 'A four-rotor drone with a flight controller. analogWrite() its channels: THROTTLE (0 off, about 140 hovers, more climbs), PITCH, ROLL and YAW (128 is neutral; higher flies forward, right, or turns right). ALT is a downward sensor: analogRead() ÷ 10 = height in cm. The board rides on top.',
+  terminals: () => [
+    ...[['thr', 'THROTTLE'], ['pitch', 'PITCH'], ['roll', 'ROLL'], ['yaw', 'YAW']].map(([key, label], i) => ({ key, label, kind: 'signal' as const, pwm: true, pos: [row(7, i, 0.5), 2.85, 3.6] as [number, number, number] })),
+    { key: 'alt', label: 'ALT (height)', kind: 'signal', analog: true, pos: [row(7, 4, 0.5), 2.85, 3.6] },
+    { key: 'vcc', label: 'VCC', kind: '5V', pos: [row(7, 5, 0.5), 2.85, 3.6] },
+    { key: 'gnd', label: 'GND', kind: 'GND', pos: [row(7, 6, 0.5), 2.85, 3.6] },
+  ],
+  deck: { minX: -3.6, maxX: 3.6, minZ: -3.2, maxZ: 3.2, y: 2.7 },
+  build() {
+    const g = new THREE.Group();
+    const frame = new THREE.Group();
+    const carbon = mat('#202227', { roughness: 0.4, metalness: 0.3 });
+    frame.add(at(box(8, 1.1, 8, carbon, 0.6), 0, 2.0, 0));
+    frame.add(at(box(8.2, 0.14, 1, mat('#1d4fa0'), 0.03), 0, 2.62, 3.6));
+    for (let i = 0; i < 7; i++) frame.add(at(cyl(0.035, 0.035, 0.3, M.gold, 6), row(7, i, 0.5), 2.75, 3.6));
+    const props: THREE.Group[] = [];
+    for (const [x, z] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+      const arm = box(9, 0.5, 0.8, carbon, 0.15);
+      arm.position.set(x * 3.2, 2.1, z * 3.2);
+      arm.rotation.y = x * z > 0 ? -Math.PI / 4 : Math.PI / 4;
+      frame.add(arm);
+      frame.add(at(cyl(0.7, 0.8, 1.2, mat('#3a3d45', { metalness: 0.6 }), 16), x * 6.3, 2.5, z * 6.3));
+      const prop = new THREE.Group();
+      prop.position.set(x * 6.3, 3.2, z * 6.3);
+      prop.add(at(box(5.6, 0.08, 0.6, mat(z < 0 ? '#e2533b' : '#e9e6df', { roughness: 0.5 }), 0.04), 0, 0, 0));
+      const disc = new THREE.Mesh(new THREE.CylinderGeometry(2.8, 2.8, 0.04, 32), new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0, depthWrite: false }));
+      prop.add(disc);
+      prop.userData.disc = disc;
+      frame.add(prop);
+      props.push(prop);
+      frame.add(at(box(0.3, 1.6, 0.3, carbon, 0.06), x * 3, 0.8, z * 3)); // landing legs
+    }
+    const front = makeLed('#34c759');
+    front.group.scale.setScalar(0.4);
+    front.group.position.set(0, 2.3, -4.1);
+    frame.add(front.group);
+    g.add(frame);
+    g.userData.drone = { frame, props, front };
+    return g;
+  },
+  locomote(part, board, dt, running) {
+    const st = part.state;
+    // a channel's value: what analogWrite() sent, 0–255
+    const ch = (k: string, rest: number) => {
+      const pin = part.pins[k];
+      if (!running || pin == null) return rest;
+      const p = board.pins[pin];
+      return p.pwm ?? (p.mode === 'OUTPUT' ? (p.value ? 255 : 0) : rest);
+    };
+    const thr = ch('thr', 0), pitch = ch('pitch', 128), roll = ch('roll', 128), yaw = ch('yaw', 128);
+    const y = st.pose?.y ?? 0;
+    const armed = thr > 25;
+    // the flight controller holds level: throttle sets climb rate around a hover point;
+    // with the motors off it simply falls
+    const vy = armed ? Math.max(-1, Math.min(1, (thr - 140) / 100)) * 30 : y > 0 ? Math.max(-300, (st.vy ?? 0) - 981 * dt) : 0;
+    st.vy = vy;
+    let up = vy * dt;
+    if (y + up < 0) up = -y;
+    // its legs reach the desk at 0.3 cm: how fast it was coming down then is how hard it landed
+    if (y >= 0.3 && y + up < 0.3) { st.touchSpeed = Math.abs(vy); st.landed = true; }
+    if (y + up > 0.5) st.landed = false;
+    const air = y > 0.3;
+    st.thr = thr;
+    st.tilt = air ? [(pitch - 128) / 127, (roll - 128) / 127] : [0, 0];
+    st.alt = y + up;
+    return {
+      forward: air ? ((pitch - 128) / 127) * 25 * dt : 0,
+      side: air ? ((roll - 128) / 127) * 25 * dt : 0,
+      turn: air ? (-(yaw - 128) / 127) * 1.6 * dt : 0,
+      up,
+    };
+  },
+  update(part, _board, ctx) {
+    const u = part.group!.userData.drone, st = part.state;
+    const spin = ctx.running && st.thr > 25 ? 0.4 + st.thr / 255 : 0;
+    for (const p of u.props) {
+      p.rotation.y += spin * 40 * ctx.dt;
+      (p.userData.disc.material as THREE.MeshBasicMaterial).opacity = spin * 0.18;
+    }
+    const [pt, rl] = st.tilt ?? [0, 0];
+    u.frame.rotation.x = -pt * 0.22;
+    u.frame.rotation.z = -rl * 0.22;
+    setLed(u.front, ctx.running ? 0.8 : 0);
+    ctx.audio.set(part.id, spin ? 140 + spin * 120 : null);
+  },
+  listener(part) {
+    return { readAnalog(pin) { return pin === part.pins.alt ? Math.min(1023, Math.round((part.state.alt ?? 0) * 10)) : undefined; } };
+  },
+  readout: part => `Height <b>${(part.state.alt ?? 0).toFixed(1)} cm</b> · throttle <b>${part.state.thr ?? 0}</b>${part.state.alt > 0.3 ? ' · flying' : ' · on the desk'}`,
+};
+
+const FINGERS = [['thumb', -2.7, 2.6, 0.75], ['index', -1.6, 3.4, 0], ['middle', -0.5, 3.7, 0], ['ring', 0.6, 3.4, 0], ['pinky', 1.65, 2.8, 0]] as const; // name, x, length, sideways tilt
+const robotHand: PartDef = {
+  type: 'hand',
+  name: 'Robotic Hand',
+  blurb: 'A hand with a servo for each finger and one for the wrist. Each finger servo: 0 straight, 180 curled tight. The wrist turns the hand: 90 faces you. Use the Servo library.',
+  terminals: () => [
+    ...[...FINGERS.map(f => f[0]), 'wrist'].map((k, i) => ({ key: k, label: `${k[0].toUpperCase()}${k.slice(1)}`, kind: 'signal' as const, pwm: true, pos: [row(8, i, 0.45), 0.62, -2.9] as [number, number, number] })),
+    { key: 'vcc', label: 'VCC', kind: '5V', pos: [row(8, 6, 0.45), 0.62, -2.9] },
+    { key: 'gnd', label: 'GND', kind: 'GND', pos: [row(8, 7, 0.45), 0.62, -2.9] },
+  ],
+  build() {
+    const g = new THREE.Group();
+    const skin = new THREE.MeshPhysicalMaterial({ color: '#eef0f3', roughness: 0.4, clearcoat: 0.5 });
+    const joint = mat('#2a2c33', { roughness: 0.5 });
+    g.add(at(box(6.6, 0.12, 6.4, mat('#1d4fa0'), 0.05), 0, 0.5, -0.2));
+    for (let i = 0; i < 8; i++) g.add(at(cyl(0.035, 0.035, 0.3, M.gold, 6), row(8, i, 0.45), 0.66, -2.9));
+    g.add(at(cyl(2.4, 2.8, 1.2, joint, 32), 0, 1.15, 0.5));
+    g.add(at(cyl(1.3, 1.5, 6.5, skin, 24), 0, 5, 0.5)); // forearm
+    const wrist = new THREE.Group();
+    wrist.position.set(0, 8.4, 0.5);
+    wrist.add(at(cyl(1.4, 1.4, 0.8, joint, 24), 0, 0, 0));
+    wrist.add(at(box(4.8, 4.6, 1.3, skin, 0.5), 0, 2.6, 0)); // palm, facing forward (+z)
+    const fingers: THREE.Group[][] = [];
+    for (const [name, x, len, tilt] of FINGERS) {
+      const segs: THREE.Group[] = [];
+      let parent: THREE.Object3D = wrist;
+      const seg = len / 3;
+      for (let k = 0; k < 3; k++) {
+        const s = new THREE.Group();
+        if (k === 0) {
+          s.position.set(x, name === 'thumb' ? 1.8 : 4.9, 0);
+          s.rotation.z = tilt;
+        } else s.position.set(0, seg, 0);
+        s.add(at(new THREE.Mesh(new THREE.SphereGeometry(0.42, 12, 8), joint), 0, 0, 0));
+        s.add(at(box(0.75, seg * 0.92, 0.8, skin, 0.25), 0, seg / 2, 0));
+        parent.add(s);
+        parent = s;
+        segs.push(s);
+      }
+      fingers.push(segs);
+    }
+    g.add(wrist);
+    g.userData.hand = { wrist, fingers };
+    return g;
+  },
+  update(part, board, ctx) {
+    const u = part.group!.userData.hand;
+    FINGERS.forEach(([name], i) => {
+      const a = servoJoint(part, board, name, ctx.simDt, ctx.running, 400);
+      // curling folds every joint towards the palm side
+      const bend = (a / 180) * (name === 'thumb' ? 0.8 : 1.35);
+      u.fingers[i].forEach((s: THREE.Group, k: number) => { s.rotation.x = bend * (k === 0 ? 0.9 : 1); });
+    });
+    const w = servoJoint(part, board, 'wrist', ctx.simDt, ctx.running);
+    u.wrist.rotation.y = ((w - 90) * Math.PI) / 180;
+  },
+  readout: part => FINGERS.map(([n]) => `${n} <b>${Math.round(part.state[n] ?? 90)}°</b>`).join(' · ') + ` · wrist <b>${Math.round(part.state.wrist ?? 90)}°</b>`,
+};
+
 /** Parts that point somewhere: which way along their own z axis they face. */
-export const FACES: Record<string, number> = { ultrasonic: 1, arm: 1, robot: -1, bolt: -1, irprox: -1, bumper: -1, linesensor: -1, lighteyes: -1, gripper: -1, compass: -1, colorsensor: -1 };
+export const FACES: Record<string, number> = { ultrasonic: 1, arm: 1, robot: -1, bolt: -1, irprox: -1, bumper: -1, linesensor: -1, lighteyes: -1, gripper: -1, compass: -1, colorsensor: -1, spider: -1, drone: -1 };
 
 export const PARTS: Record<string, PartDef> = Object.fromEntries(
-  [uno, led, rgbLed, button, pot, ldr, tmp36, buzzer, ultrasonic, servo, motor, trafficLight, car, lcd, sevenSeg, pir, joystick, neopixel, bigBreadboard, relay, dht11, oled, stepper, keypad, soil, encoder, matrix, hall, magnet, sound, gas, irRemote, bluetooth, digits, sdcard, robotCar, trackMat, lineSensor, wall, robotArm, cube, pad, bumper, irProx, encoders, lightEyes, beacon, bolt, gripper, compassModule, colorSensor].map(d => [d.type, d]),
+  [uno, led, rgbLed, button, pot, ldr, tmp36, buzzer, ultrasonic, servo, motor, trafficLight, car, lcd, sevenSeg, pir, joystick, neopixel, bigBreadboard, relay, dht11, oled, stepper, keypad, soil, encoder, matrix, hall, magnet, sound, gas, irRemote, bluetooth, digits, sdcard, robotCar, trackMat, lineSensor, wall, robotArm, cube, pad, bumper, irProx, encoders, lightEyes, beacon, bolt, gripper, compassModule, colorSensor, spider, drone, robotHand].map(d => [d.type, d]),
 );
 
 /** Parts shown in the sandbox palette, in order. */
-export const PALETTE = ['breadboard', 'led', 'rgb', 'button', 'keypad', 'pot', 'encoder', 'joystick', 'ldr', 'temp', 'dht', 'soil', 'gas', 'sound', 'hall', 'pir', 'buzzer', 'ultrasonic', 'servo', 'stepper', 'motor', 'relay', 'traffic', 'seg7', 'digits', 'lcd', 'oled', 'matrix', 'neopixel', 'ir', 'bluetooth', 'sdcard', 'bolt', 'robot', 'gripper', 'compass', 'colorsensor', 'linesensor', 'irprox', 'bumper', 'encoders', 'lighteyes', 'beacon', 'arm', 'cube', 'track', 'pad', 'wall', 'magnet', 'car'];
+export const PALETTE = ['breadboard', 'led', 'rgb', 'button', 'keypad', 'pot', 'encoder', 'joystick', 'ldr', 'temp', 'dht', 'soil', 'gas', 'sound', 'hall', 'pir', 'buzzer', 'ultrasonic', 'servo', 'stepper', 'motor', 'relay', 'traffic', 'seg7', 'digits', 'lcd', 'oled', 'matrix', 'neopixel', 'ir', 'bluetooth', 'sdcard', 'bolt', 'robot', 'spider', 'drone', 'hand', 'gripper', 'compass', 'colorsensor', 'linesensor', 'irprox', 'bumper', 'encoders', 'lighteyes', 'beacon', 'arm', 'cube', 'track', 'pad', 'wall', 'magnet', 'car'];
 
 let idCounter = 0;
 export function newPart(type: string, init: Partial<Part> = {}): Part {

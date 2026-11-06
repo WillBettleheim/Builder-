@@ -1724,7 +1724,7 @@ const PART_CATEGORIES: Record<string, string[]> = {
   Displays: ['seg7', 'digits', 'lcd', 'oled', 'matrix'],
   Motion: ['servo', 'stepper', 'motor', 'relay', 'buzzer'],
   Connect: ['bluetooth', 'sdcard'],
-  Robotics: ['bolt', 'robot', 'gripper', 'compass', 'colorsensor', 'linesensor', 'irprox', 'bumper', 'encoders', 'lighteyes', 'beacon', 'arm', 'cube', 'track', 'pad', 'wall'],
+  Robotics: ['bolt', 'robot', 'spider', 'drone', 'hand', 'gripper', 'compass', 'colorsensor', 'linesensor', 'irprox', 'bumper', 'encoders', 'lighteyes', 'beacon', 'arm', 'cube', 'track', 'pad', 'wall'],
   Other: ['breadboard', 'magnet', 'car'],
 };
 const partFilter = { text: '', cat: 'All' };
