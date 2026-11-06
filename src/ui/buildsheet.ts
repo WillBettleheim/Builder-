@@ -130,7 +130,7 @@ export function buildSheetHtml(title: string, parts: Part[], wires: Wire[], code
         <p class="muted">Unplug the USB cable while you wire. Ground and power first, then signals.</p>
         <ol class="bs-steps">${sorted.map(w => {
           const [from, to] = boardFirst(w);
-          return `<li><span class="bs-wire" style="background:${w.color}"></span><span><b>${esc(COLOR_NAMES[w.color] ?? 'any colour')}</b> wire: ${esc(endpointLabel(parts, from))} → ${esc(endpointLabel(parts, to))}</span></li>`;
+          return `<li><span class="bs-wire" style="background:${/^#[0-9a-f]{3,8}$/i.test(w.color) ? w.color : '#888'}"></span><span><b>${esc(COLOR_NAMES[w.color] ?? 'any colour')}</b> wire: ${esc(endpointLabel(parts, from))} → ${esc(endpointLabel(parts, to))}</span></li>`;
         }).join('') || '<li>No wires yet.</li>'}</ol>
       </section>
       <section>
