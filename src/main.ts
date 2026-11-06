@@ -9,6 +9,7 @@ import { measure, type MeterMode } from './sim/meter';
 import { liveSchematic, renderSchematic } from './ui/schematic';
 import { BoardView } from './ui/boardview';
 import { pack, unpack } from './ui/codec';
+import { cleanSaved, type Project, type Saved, type SavedPart, type SavedScene } from './savefile';
 import { MAX_CODE, cleanCode, cleanPartList, cleanWireList, escapeHtml, isHexColor, isSafeId } from './sim/sanitize';
 import { classCsv, dashboardHtml, importReports, inviteLink, loadTeacher, newClassCode, readInvite, reportLink, saveTeacher, type LessonRef, type Report } from './ui/teacher';
 import { WIRE_COLORS, autoWires, endpoint, endpointLabel, nearestGround, newWireId, type Wire } from './sim/circuit';
@@ -25,47 +26,13 @@ import { DOCS } from './ui/docs';
 import { LESSONS, type GoalCtx, type Lesson, type PartSpec } from './lessons';
 
 // ---------- persistence ----------
-interface SavedPart { id: string; type: string; x: number; z: number; rot: number; pins: Record<string, number | null>; props: Record<string, any>; locked?: boolean }
-interface SavedScene { code: string; parts: SavedPart[]; wires?: Wire[] }
-interface Project { id: string; name: string; updated: number; scene: SavedScene }
-interface Saved {
-  mode: 'lessons' | 'sandbox';
-  lessonId: string;
-  goals: Record<string, boolean[]>;
-  lessons: Record<string, SavedScene>;
-  sandbox: SavedScene | null; // pre-projects save; migrated into projects
-  projects: Project[];
-  projectId: string;
-  muted: boolean;
-  theme: 'auto' | 'light' | 'dark';
-  toured: boolean;
-  quality: 'auto' | 'high' | 'balanced' | 'low';
-  badges: Record<string, number>;
-  quiz: Record<string, Record<number, { tries: number; ok: boolean }>>;
-  stats: { wires: number };
-  instructor: boolean;
-  /** camera and overlay options from the View menu */
-  view?: { pinLabels: 'off' | 'used' | 'all'; follow: boolean; wiresOnTop: boolean; arrows?: boolean; trail?: boolean };
-  /** robot dashboard folded away */
-  dashHidden?: boolean;
-  /** best lap times on line tracks, per lesson or project, in ms */
-  bestLaps?: Record<string, number>;
-  /** width of the side panel in pixels, after the person dragged it */
-  sideW?: number;
-  /** the live board panel is folded away */
-  boardHidden?: boolean;
-  /** grid size parts snap to, in cm (0 = fine 0.25 cm steps) */
-  snap?: number;
-  /** the class this learner joined from a teacher's invite link */
-  classroom?: { code: string; name: string; teacher: string; student: string } | null;
-}
 const KEY = 'builder-v1';
 const OLD_KEY = 'arduino-lab-v1'; // name before the app became Builder
 function load(): Saved {
   const empty: Saved = { mode: 'lessons', lessonId: LESSONS[0].id, goals: {}, lessons: {}, sandbox: null, projects: [], projectId: '', muted: false, theme: 'auto', toured: false, quality: 'auto', badges: {}, quiz: {}, stats: { wires: 0 }, instructor: true };
   try {
     const raw = localStorage.getItem(KEY) ?? localStorage.getItem(OLD_KEY);
-    return raw ? { ...empty, ...JSON.parse(raw) } : empty;
+    return raw ? cleanSaved(JSON.parse(raw), empty, LESSONS.map(l => l.id)) : empty;
   } catch {
     return empty;
   }
