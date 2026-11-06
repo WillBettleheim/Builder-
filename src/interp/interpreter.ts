@@ -162,7 +162,7 @@ export class Interpreter {
       for (const [name, v] of s.vars) {
         if (seen.has(name)) continue;
         seen.add(name);
-        out.push({ name, type: TYPE_NAMES[v.type] ?? v.type, value: describe(v), local: s !== this.global });
+        out.push({ name, type: Object.hasOwn(TYPE_NAMES, v.type) ? TYPE_NAMES[v.type] : v.type, value: describe(v), local: s !== this.global });
       }
     }
     return out;
@@ -422,7 +422,7 @@ export class Interpreter {
       case 'Num': return n.isFloat ? 'float' : 'long';
       case 'Str': return 'String';
       case 'Ident': {
-        if (n.name in CONSTANTS) return FLOAT_CONSTANTS.has(n.name) ? 'float' : 'int';
+        if (Object.hasOwn(CONSTANTS, n.name)) return FLOAT_CONSTANTS.has(n.name) ? 'float' : 'int';
         return this.findVar(n.name)?.type ?? 'long';
       }
       case 'Index': {
@@ -452,7 +452,7 @@ export class Interpreter {
           const name = n.callee.name;
           if (FLOAT_FUNCS.has(name)) return 'float';
           if (name === 'String') return 'String';
-          if (name in CAST_TYPES) return CAST_TYPES[name];
+          if (Object.hasOwn(CAST_TYPES, name)) return CAST_TYPES[name];
           if (name === 'millis' || name === 'micros' || name === 'pulseIn') return 'ulong';
           if (['abs', 'min', 'max', 'constrain'].includes(name)) {
             return n.args.some((a: Node) => this.typeOf(a) === 'float') ? 'float' : 'long';
@@ -476,7 +476,7 @@ export class Interpreter {
       case 'Num': return n.value;
       case 'Str': return n.value;
       case 'Ident': {
-        if (n.name in CONSTANTS && !this.findVar(n.name)) return CONSTANTS[n.name];
+        if (Object.hasOwn(CONSTANTS, n.name) && !this.findVar(n.name)) return CONSTANTS[n.name];
         const v = this.lookup(n.name, n.line);
         if (v.isArray) return v.value;
         return v.value;
@@ -520,7 +520,7 @@ export class Interpreter {
       case 'Cond': return truthy(yield* this.eval(n.cond)) ? yield* this.eval(n.a) : yield* this.eval(n.b);
       case 'Comma': yield* this.eval(n.left); return yield* this.eval(n.right);
       case 'Cast': return coerce(n.type, yield* this.eval(n.arg));
-      case 'SizeofType': return SIZES[n.type] ?? 2;
+      case 'SizeofType': return Object.hasOwn(SIZES, n.type) ? SIZES[n.type] : 2;
       case 'Sizeof': {
         const val = yield* this.eval(n.arg);
         const size = SIZES[this.typeOf(n.arg)] ?? 2;
@@ -584,7 +584,7 @@ export class Interpreter {
 
   private *store(target: Node, value: Value): Gen<Value> {
     if (target.k === 'Ident') {
-      if (target.name in CONSTANTS && !this.findVar(target.name)) throw new RuntimeError(`"${target.name}" is a built-in constant and cannot be changed`, target.line);
+      if (Object.hasOwn(CONSTANTS, target.name) && !this.findVar(target.name)) throw new RuntimeError(`"${target.name}" is a built-in constant and cannot be changed`, target.line);
       const v = this.lookup(target.name, target.line);
       if (v.isArray) throw new RuntimeError(`Cannot assign to the whole array "${target.name}" — assign one element like ${target.name}[0] = ...`, target.line);
       if (v.type === 'Servo' || v.type === 'LCD' || v.type === 'NeoPixel') throw new RuntimeError(`Cannot assign to a ${v.type} object`, target.line);
