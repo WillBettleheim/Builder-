@@ -3948,13 +3948,270 @@ void loop() {
   },
 );
 
+// ---------- spider, drone and robotic hand ----------
+const SPIDER_PINMAP = { fl_hip: 2, fl_knee: 3, fr_hip: 4, fr_knee: 5, bl_hip: 6, bl_knee: 7, br_hip: 8, br_knee: 9 };
+const SPIDER_HEADER = `#include <Servo.h>
+
+// pair A: front-left + back-right    pair B: front-right + back-left
+Servo flHip, flKnee, frHip, frKnee, blHip, blKnee, brHip, brKnee;
+const int UP = 150, DOWN = 90;          // knees: foot lifted, foot on the floor
+const int FRONT = 120, BACK = 60;       // hips: leg swung forward, swung back
+
+void kneesA(int a) { flKnee.write(a); brKnee.write(a); }
+void kneesB(int a) { frKnee.write(a); blKnee.write(a); }
+void hipsA(int fl, int br) { flHip.write(fl); brHip.write(br); }
+void hipsB(int fr, int bl) { frHip.write(fr); blHip.write(bl); }
+
+void standUp() {
+  flHip.attach(2); flKnee.attach(3); frHip.attach(4); frKnee.attach(5);
+  blHip.attach(6); blKnee.attach(7); brHip.attach(8); brKnee.attach(9);
+  hipsA(90, 90); hipsB(90, 90);
+  kneesA(DOWN); kneesB(DOWN);
+  delay(500);
+}
+`;
+const spiderOf = (c: GoalCtx) => c.part('spider');
+const droneOf = (c: GoalCtx) => c.part('drone');
+const handOf = (c: GoalCtx) => c.part('hand');
+const fingersAre = (c: GoalCtx, want: Record<string, 'open' | 'closed'>) => {
+  const h = handOf(c);
+  if (!h) return false;
+  return Object.entries(want).every(([f, s]) => (s === 'open' ? (h.state[f] ?? 90) < 40 : (h.state[f] ?? 90) > 140));
+};
+
+LESSONS.push(
+  {
+    id: 'spider-walk',
+    title: 'Spider: First Steps',
+    icon: 'spider',
+    level: 'Robotics',
+    intro: `
+<p>Legs are harder than wheels: the robot has to <strong>lift</strong>, <strong>swing</strong> and <strong>plant</strong> each foot in the right order, or it just shuffles on the spot.</p>
+<p>This spider uses a <strong>trot</strong>: diagonal legs move together. While pair A is up in the air swinging forward, pair B is on the floor pushing back, and that push moves the body.</p>
+<pre>lift A → swing A forward, push B back → put A down
+lift B → swing B forward, push A back → put B down</pre>
+<p><strong>Challenge:</strong> turn on the spot. The left legs on the floor push back while the right legs push forward.</p>`,
+    parts: [boardOn('spider-walk', 0.2), { type: 'spider', x: 0, z: 14, pins: SPIDER_PINMAP }],
+    code: `${SPIDER_HEADER}
+void stepForward() {
+  kneesA(UP);                  // lift pair A
+  delay(150);
+  // TODO: swing A forward (hipsA(FRONT, FRONT)) while B pushes back (hipsB(BACK, BACK)),
+  //       wait, put A down, then do the same with the pairs swapped
+}
+
+void setup() {
+  standUp();
+}
+
+void loop() {
+  stepForward();
+}
+`,
+    solution: `${SPIDER_HEADER}
+void stepForward() {
+  kneesA(UP);                       // lift pair A
+  delay(150);
+  hipsA(FRONT, FRONT);              // A swings forward in the air...
+  hipsB(BACK, BACK);                // ...while B pushes back on the floor
+  delay(250);
+  kneesA(DOWN);                     // plant A
+  delay(150);
+  kneesB(UP);                       // now the other pair
+  delay(150);
+  hipsB(FRONT, FRONT);
+  hipsA(BACK, BACK);
+  delay(250);
+  kneesB(DOWN);
+  delay(150);
+}
+
+// to turn right, the left side has to move forward and the right side back:
+// so on the floor, left legs sweep backwards and right legs sweep forwards
+void turnRight() {
+  kneesA(UP);
+  delay(150);
+  hipsA(FRONT, BACK);               // A gets ready in the air
+  hipsB(FRONT, BACK);               // B on the floor: right leg (FR) forward, left leg (BL) back
+  delay(250);
+  kneesA(DOWN);
+  delay(150);
+  kneesB(UP);
+  delay(150);
+  hipsB(BACK, FRONT);               // B gets ready in the air
+  hipsA(BACK, FRONT);               // A on the floor: left leg (FL) back, right leg (BR) forward
+  delay(250);
+  kneesB(DOWN);
+  delay(150);
+}
+
+void setup() {
+  standUp();
+  for (int i = 0; i < 4; i++) stepForward();
+  for (int i = 0; i < 2; i++) turnRight();
+}
+
+void loop() {}
+`,
+    goals: [
+      { text: 'Lift a leg off the floor', check: (c, m) => seen(m, 'x', SPIDER_LEGS_UP(c) > 0) },
+      { text: 'Walk forward 20 cm', check: (c, m) => seen(m, 'x', (spiderOf(c)?.state.travelled ?? 0) >= 20) },
+      { text: 'Challenge: turn at least 90° on the spot', check: (c, m) => { const sp = spiderOf(c), pose = sp?.state.pose; return seen(m, 'x', !!pose && Math.abs(pose.a + (sp!.rot * Math.PI) / 2) >= Math.PI / 2 - 0.1); } },
+    ],
+  },
+  {
+    id: 'drone-hover',
+    title: 'Drone: Take Off and Hover',
+    icon: 'drone',
+    level: 'Robotics',
+    intro: `
+<p>A drone can’t just “go to 30 cm”: it only knows how hard to spin its propellers. To hover, it has to <strong>keep measuring and correcting</strong>, which is called a <em>feedback loop</em>.</p>
+<pre>error = target − height
+throttle = HOVER + error × GAIN</pre>
+<p>Too low? The error is positive, so throttle goes up. Too high? It goes down. Close to the target, it barely changes. That’s a <strong>proportional controller</strong>, the heart of every autopilot.</p>
+<p>Then <strong>land gently</strong>: ease the throttle down, and only cut the motors once you’re on the desk.</p>`,
+    parts: [boardOn('drone-hover', 0), { type: 'drone', x: 0, z: 12, pins: { thr: 3, pitch: 5, roll: 6, yaw: 9, alt: 14 } }],
+    code: `const THR = 3, PITCH = 5, ROLL = 6, YAW = 9;
+const int HOVER = 140;   // throttle that roughly holds height
+
+float height() { return analogRead(A0) / 10.0; }   // cm
+
+void setup() {
+  Serial.begin(9600);
+  pinMode(THR, OUTPUT); pinMode(PITCH, OUTPUT); pinMode(ROLL, OUTPUT); pinMode(YAW, OUTPUT);
+  analogWrite(PITCH, 128); analogWrite(ROLL, 128); analogWrite(YAW, 128);   // fly level
+}
+
+void loop() {
+  Serial.println(height());
+  analogWrite(THR, 170);   // TODO: hold 30 cm with throttle = HOVER + (30 - height) * 3
+  delay(20);
+}
+`,
+    solution: `const THR = 3, PITCH = 5, ROLL = 6, YAW = 9;
+const int HOVER = 140;   // throttle that roughly holds height
+const float GAIN = 3.0;
+
+float height() { return analogRead(A0) / 10.0; }   // cm
+
+/** Hold a height for a while, correcting all the time. */
+void holdAt(float target, long ms) {
+  long until = millis() + ms;
+  while (millis() < until) {
+    float error = target - height();
+    int throttle = constrain(HOVER + error * GAIN, 60, 230);
+    analogWrite(THR, throttle);
+    Serial.println(height());
+    delay(20);
+  }
+}
+
+void setup() {
+  Serial.begin(9600);
+  pinMode(THR, OUTPUT); pinMode(PITCH, OUTPUT); pinMode(ROLL, OUTPUT); pinMode(YAW, OUTPUT);
+  analogWrite(PITCH, 128); analogWrite(ROLL, 128); analogWrite(YAW, 128);   // fly level
+
+  holdAt(30, 7000);        // take off and hover
+  holdAt(3, 4000);         // come down slowly to just above the desk
+  while (height() > 0.2) { analogWrite(THR, 115); delay(20); }   // settle gently
+  analogWrite(THR, 0);     // motors off
+}
+
+void loop() {}
+`,
+    goals: [
+      { text: 'Take off: climb above 10 cm', check: (c, m) => seen(m, 'x', (droneOf(c)?.state.alt ?? 0) > 10) },
+      { text: 'Hover at 30 cm (within 3 cm) for 3 seconds', check: (c, m) => { const a = droneOf(c)?.state.alt ?? 0; if (heldFor(c, m, 'h', Math.abs(a - 30) <= 3) > 3000) m.done = true; return !!m.done; } },
+      { text: 'Land gently back on the desk', check: (c, m) => { const d = droneOf(c); if ((d?.state.alt ?? 0) > 20) m.flew = true; return seen(m, 'x', !!m.flew && !!d?.state.landed && (d.state.touchSpeed ?? 99) < 12 && (d.state.thr ?? 0) <= 25); } },
+    ],
+  },
+  {
+    id: 'hand-gestures',
+    title: 'Robot Hand: Gestures',
+    icon: 'hand',
+    level: 'Robotics',
+    intro: `
+<p>Each finger of this hand has its own servo: <code>0</code> is straight and <code>180</code> curls it tight. Real prosthetic hands work the same way, with motors pulling on cords like tendons.</p>
+<p>A gesture is just five angles. Write a helper so each one is a single line:</p>
+<pre>void pose(int t, int i, int m, int r, int p)
+pose(0, 0, 0, 0, 0);            // open hand
+pose(180, 180, 180, 180, 180);  // fist</pre>
+<p><strong>Your job:</strong> make a fist, a peace sign ✌️ and a thumbs up 👍. Then wave hello with the wrist!</p>`,
+    parts: [{ type: 'uno', x: 0, z: 0 }, { type: 'hand', x: 14, z: 4, pins: { thumb: 3, index: 5, middle: 6, ring: 9, pinky: 10, wrist: 11 } }],
+    code: `#include <Servo.h>
+
+Servo thumb, index, middle, ring, pinky, wrist;
+
+void pose(int t, int i, int m, int r, int p) {
+  thumb.write(t); index.write(i); middle.write(m); ring.write(r); pinky.write(p);
+  delay(800);
+}
+
+void setup() {
+  thumb.attach(3); index.attach(5); middle.attach(6); ring.attach(9); pinky.attach(10); wrist.attach(11);
+  wrist.write(90);
+  pose(0, 0, 0, 0, 0);            // open hand
+}
+
+void loop() {
+  pose(180, 180, 180, 180, 180);  // fist
+  pose(0, 0, 0, 0, 0);            // open
+  // TODO: peace sign, thumbs up, and a wave with the wrist
+}
+`,
+    solution: `#include <Servo.h>
+
+Servo thumb, index, middle, ring, pinky, wrist;
+
+void pose(int t, int i, int m, int r, int p) {
+  thumb.write(t); index.write(i); middle.write(m); ring.write(r); pinky.write(p);
+  delay(800);
+}
+
+void wave() {
+  for (int i = 0; i < 2; i++) {
+    wrist.write(60); delay(300);
+    wrist.write(120); delay(300);
+  }
+  wrist.write(90);
+}
+
+void setup() {
+  thumb.attach(3); index.attach(5); middle.attach(6); ring.attach(9); pinky.attach(10); wrist.attach(11);
+  wrist.write(90);
+  pose(0, 0, 0, 0, 0);            // open hand
+}
+
+void loop() {
+  pose(180, 180, 180, 180, 180);  // fist
+  pose(180, 0, 0, 180, 180);      // peace sign
+  pose(0, 180, 180, 180, 180);    // thumbs up
+  pose(0, 0, 0, 0, 0);            // open
+  wave();
+}
+`,
+    goals: [
+      { text: 'Make a fist', check: (c, m) => seen(m, 'x', fingersAre(c, { thumb: 'closed', index: 'closed', middle: 'closed', ring: 'closed', pinky: 'closed' })) },
+      { text: 'Peace sign ✌️: index and middle up, the rest curled', check: (c, m) => seen(m, 'x', fingersAre(c, { thumb: 'closed', index: 'open', middle: 'open', ring: 'closed', pinky: 'closed' })) },
+      { text: 'Thumbs up 👍', check: (c, m) => seen(m, 'x', fingersAre(c, { thumb: 'open', index: 'closed', middle: 'closed', ring: 'closed', pinky: 'closed' })) },
+      { text: 'Challenge: wave hello with the wrist', check: (c, m) => { const w = handOf(c)?.state.wrist ?? 90; if (w < 70) m.l = true; if (w > 110) m.r = true; return seen(m, 'x', !!m.l && !!m.r); } },
+    ],
+  },
+);
+
+/** How many of the spider's feet are off the floor. */
+function SPIDER_LEGS_UP(c: GoalCtx) {
+  const sp = spiderOf(c);
+  return sp ? ['fl', 'fr', 'bl', 'br'].filter(n => (sp.state[`${n}_knee`] ?? 90) >= 110).length : 0;
+}
+
 const ORDER = [
   'blink', 'circuit', 'breadboard', 'fade', 'chaser', 'rgb', 'serial',
   'seg7', 'scoreboard', 'lcd', 'oled', 'matrix', 'neopixel',
   'button', 'millis', 'interrupts', 'pot', 'encoder', 'joystick', 'remote', 'nightlight', 'sound', 'morse', 'clap', 'distance',
   'servo', 'stepper', 'motor', 'relay',
   'bug-pinmode', 'bug-wiring', 'bug-button', 'bug-array', 'bug-compare',
-  'bolt-hello', 'bolt-moods', 'bolt-follow', 'bolt-scan',
+  'bolt-hello', 'bolt-moods', 'bolt-follow', 'bolt-scan', 'hand-gestures', 'spider-walk', 'drone-hover',
   'robot-drive', 'bumper-bot', 'phone-robot', 'odometry', 'robot-compass', 'robot-deliver', 'robot-colors', 'line-follow', 'patrol', 'avoider', 'light-seeker', 'arm-pick',
   'thermo', 'weather', 'plant', 'smoke', 'motion', 'lock', 'parking', 'phone', 'logger',
 ];

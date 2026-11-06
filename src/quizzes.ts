@@ -3,6 +3,18 @@
 export interface Question { q: string; a: string[]; correct: number; why: string }
 
 export const QUIZZES: Record<string, Question[]> = {
+  'spider-walk': [
+    { q: 'Why lift a leg before swinging it forward?', a: ['A foot on the floor pushes the body; a lifted foot moves freely', 'Lifted legs are faster', 'The servo needs it'], correct: 0, why: 'A planted foot drags the body. Swing it forward on the floor and you undo the step.' },
+    { q: 'In a trot, which legs move together?', a: ['Diagonal pairs', 'Both left legs', 'Both front legs'], correct: 0, why: 'Diagonal pairs keep the body balanced on two feet, like a trotting dog.' },
+  ],
+  'drone-hover': [
+    { q: 'The drone is at 25 cm and the target is 30. With GAIN 3, how much does throttle change?', a: ['Up by 15', 'Down by 15', 'Up by 5'], correct: 0, why: 'error = 30 − 25 = 5, times 3 = 15 more throttle.' },
+    { q: 'Why not just set a fixed throttle to hover?', a: ['Batteries, weight and air change, so it would slowly climb or sink', 'Fixed throttle is illegal', 'It would spin'], correct: 0, why: 'Only a feedback loop that keeps measuring can hold a height as things change.' },
+  ],
+  'hand-gestures': [
+    { q: 'What does pose(180, 0, 0, 180, 180) show?', a: ['A peace sign', 'A fist', 'Thumbs up'], correct: 0, why: 'Index and middle are straight (0), the others curled (180).' },
+    { q: 'Why give the pose() helper a delay?', a: ['So the fingers have time to reach the angles before the next gesture', 'To save power', 'Servos can only move once a second'], correct: 0, why: 'write() only sets the target; the servos need a moment to get there.' },
+  ],
   'robot-deliver': [
     { q: 'How does this robot know how far it has driven?', a: ['By timing: speed × time', 'The gripper measures it', 'It can’t move a set distance'], correct: 0, why: 'Without encoders, a robot estimates distance from how fast it goes and for how long.' },
     { q: 'What does grip.write(20) do?', a: ['Closes the jaws', 'Opens the jaws', 'Drives 20 cm'], correct: 0, why: 'Below 40° the jaws close around the cube; above 70° they open.' },
