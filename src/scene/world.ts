@@ -52,7 +52,10 @@ export class World {
   /** grid size parts snap to while dragging, in cm */
   snap = 0.5;
   /** view options: pin labels over the board, the camera riding with a robot, wires drawn through parts */
-  view = { pinLabels: 'used' as 'off' | 'used' | 'all', follow: false, wiresOnTop: false, arrows: true };
+  view = { pinLabels: 'used' as 'off' | 'used' | 'all', follow: false, wiresOnTop: false, arrows: true, trail: true };
+  /** test drive: a robot steered from the keyboard instead of by its sketch */
+  testDrive: { id: string; keys: Set<string> } | null = null;
+  private trails = new Map<string, { line: THREE.Line; pts: Float32Array; n: number; last: THREE.Vector2 | null }>();
   private arrows = new THREE.Group();
   private facingArrow: THREE.Mesh;
   private pinTags = new Map<number, { sprite: THREE.Sprite; line: THREE.Line; draw: (cls: string) => void; cls: string }>();
@@ -374,6 +377,8 @@ export class World {
 
   removePart(part: Part) {
     for (const p of this.parts) if (p.props.mount === part.id) this.unmount(p); // passengers stay where they are
+    this.dropTrail(part.id);
+    if (this.testDrive?.id === part.id) this.testDrive = null;
     if (part.group) this.scene.remove(part.group);
     this.audio.set(part.id, null);
     this.parts = this.parts.filter(p => p !== part);
@@ -388,6 +393,8 @@ export class World {
   }
 
   clear() {
+    for (const id of [...this.trails.keys()]) this.dropTrail(id);
+    this.testDrive = null;
     for (const p of [...this.parts]) {
       if (p.group) this.scene.remove(p.group);
       this.audio.set(p.id, null);
@@ -588,10 +595,10 @@ export class World {
   }
 
   /** Move robot bases by their wheel speeds; a new run starts them from their home spot. */
-  private driveRobots(dt: number) {
+  private driveRobots(rawDt: number) {
     if (this.running !== this.wasRunning) {
       this.wasRunning = this.running;
-      if (this.running) for (const p of this.parts) if (PARTS[p.type].drive) { delete p.state.pose; p.state.travelled = 0; p.state.bumps = 0; p.state.distL = 0; p.state.distR = 0; }
+      if (this.running) for (const p of this.parts) if (PARTS[p.type].drive) { delete p.state.pose; p.state.travelled = 0; p.state.bumps = 0; p.state.distL = 0; p.state.distR = 0; this.clearTrail(p.id); }
       this.wiresDirty = true; // robots may have jumped back to their start
       this.hitsDirty = true;
       this.shadowDirty = true;
@@ -600,20 +607,24 @@ export class World {
       const def = PARTS[p.type];
       if (!def.drive || !p.group) continue;
       const powered = !p.state.missing?.length;
-      const sp = this.running && powered ? def.drive(p, this.board) : { left: 0, right: 0, track: 1 };
+      const test = this.testDrive?.id === p.id ? this.testDrive : null;
+      const sp = test ? keyDrive(test.keys, def.drive(p, this.board).track) : this.running && powered ? def.drive(p, this.board) : { left: 0, right: 0, track: 1 };
+      // a test drive happens in real time; a sketch's robot keeps pace with the sketch's speed setting
+      const step = test ? rawDt : rawDt * this.timeScale;
       p.state.vl = sp.left;
       p.state.vr = sp.right;
       p.state.odoAt = this.board.time; // wheel encoders extrapolate from here as sketch time moves on
-      if ((!sp.left && !sp.right) || dt <= 0) continue;
+      if ((!sp.left && !sp.right) || step <= 0) continue;
       let pose = { ...this.poseOf(p) };
-      const steps = Math.max(1, Math.ceil(dt / 0.02));
+      const steps = Math.max(1, Math.ceil(step / 0.02));
       for (let i = 0; i < steps; i++) {
-        const h = dt / steps;
+        const h = step / steps;
         const v = (sp.left + sp.right) / 2;
         const a = pose.a + ((sp.right - sp.left) / sp.track) * h; // faster right wheel turns it left
         const x = THREE.MathUtils.clamp(pose.x - v * Math.sin(a) * h, -DESK, DESK);
         const z = THREE.MathUtils.clamp(pose.z - v * Math.cos(a) * h, -DESK, DESK);
-        if (this.blockedAt(p, x, z, undefined, a)) {
+        // (a robot already stuck in something may still drive out of it)
+        if (this.blockedAt(p, x, z, undefined, a) && !this.blockedAt(p, pose.x, pose.z, undefined, pose.a)) {
           if (!(p.state.bumpUntil > performance.now())) this.audio.click();
           p.state.bumpUntil = performance.now() + 600;
           p.state.bumpAt = this.board.time;
@@ -627,7 +638,58 @@ export class World {
         p.state.distR = (p.state.distR ?? 0) + Math.abs(sp.right) * h;
       }
       p.state.pose = pose;
+      this.extendTrail(p, pose.x, pose.z);
+      this.kick();
     }
+  }
+
+  /** Where each robot has been, drawn on the mat. */
+  private extendTrail(p: Part, x: number, z: number) {
+    let t = this.trails.get(p.id);
+    if (!t) {
+      const pts = new Float32Array(3 * 4000);
+      const geo = new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(pts, 3));
+      geo.setDrawRange(0, 0);
+      const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: p.type === 'bolt' ? '#14b8c4' : '#f2b705', transparent: true, opacity: 0.85 }));
+      line.frustumCulled = false;
+      line.renderOrder = 3;
+      this.scene.add(line);
+      t = { line, pts, n: 0, last: null };
+      this.trails.set(p.id, t);
+    }
+    t.line.visible = this.view.trail;
+    if (t.last && t.last.distanceTo(new THREE.Vector2(x, z)) < 0.4) return;
+    if (t.n >= 4000) { t.pts.copyWithin(0, 3 * 1000); t.n -= 1000; } // keep the newest stretch
+    t.pts.set([x, 0.07, z], t.n * 3);
+    t.n++;
+    t.last = new THREE.Vector2(x, z);
+    t.line.geometry.setDrawRange(0, t.n);
+    (t.line.geometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
+  }
+
+  private dropTrail(id: string) {
+    const t = this.trails.get(id);
+    if (!t) return;
+    this.scene.remove(t.line);
+    t.line.geometry.dispose();
+    (t.line.material as THREE.Material).dispose();
+    this.trails.delete(id);
+  }
+
+  clearTrail(id?: string) {
+    for (const [key, t] of this.trails) {
+      if (id && key !== id) continue;
+      t.n = 0;
+      t.last = null;
+      t.line.geometry.setDrawRange(0, 0);
+    }
+    this.kick();
+  }
+
+  setTrailVisible(on: boolean) {
+    this.view.trail = on;
+    for (const t of this.trails.values()) t.line.visible = on;
+    this.kick();
   }
 
   /** Draw only when the picture can have changed, and redo shadows only when things moved. */
@@ -1343,7 +1405,7 @@ export class World {
       this.hitsAt = performance.now();
       this.rebuildHits();
     }
-    this.driveRobots(dt * this.timeScale);
+    this.driveRobots(dt);
     // passengers follow their hosts (a robot driving, or a host being dragged)
     const moved = this.parts.some(p => PARTS[p.type].drive && (p.state.vl || p.state.vr));
     if (moved || this.drag || this.running) {
@@ -1405,6 +1467,15 @@ function localFootprint(g: THREE.Group): { minX: number; maxX: number; minZ: num
   });
   if (box.isEmpty()) return { minX: -1, maxX: 1, minZ: -1, maxZ: 1 };
   return { minX: box.min.x, maxX: box.max.x, minZ: box.min.z, maxZ: box.max.z };
+}
+
+/** Wheel speeds from the keys held during a test drive: W/S or ↑/↓ drive, A/D or ←/→ steer. */
+function keyDrive(keys: Set<string>, track: number) {
+  const v = 15;
+  const fwd = (keys.has('w') ? 1 : 0) - (keys.has('s') ? 1 : 0);
+  const turn = (keys.has('a') ? 1 : 0) - (keys.has('d') ? 1 : 0); // + turns left
+  if (!fwd) return { left: -turn * v * 0.7, right: turn * v * 0.7, track }; // spin on the spot
+  return { left: fwd * v * (1 - turn * 0.45), right: fwd * v * (1 + turn * 0.45), track };
 }
 
 /** A flat arrow lying on the desk, pointing along +x. */
