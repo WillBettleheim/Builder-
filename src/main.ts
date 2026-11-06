@@ -44,7 +44,11 @@ interface Saved {
   stats: { wires: number };
   instructor: boolean;
   /** camera and overlay options from the View menu */
-  view?: { pinLabels: 'off' | 'used' | 'all'; follow: boolean; wiresOnTop: boolean; arrows?: boolean };
+  view?: { pinLabels: 'off' | 'used' | 'all'; follow: boolean; wiresOnTop: boolean; arrows?: boolean; trail?: boolean };
+  /** robot dashboard folded away */
+  dashHidden?: boolean;
+  /** best lap times on line tracks, per lesson or project, in ms */
+  bestLaps?: Record<string, number>;
   /** width of the side panel in pixels, after the person dragged it */
   sideW?: number;
   /** the live board panel is folded away */
@@ -363,6 +367,7 @@ world.onFrame = dt => {
   if (!meterEl.hidden && performance.now() - meterAt > 120) { meterAt = performance.now(); updateMeter(); }
   updateSchematic();
   updatePhone();
+  updateDash();
   if (performance.now() - boardAt > 100) { boardAt = performance.now(); if (!saved.boardHidden) boardView.update(world.parts, world.wires, world.board, running, world.selected); if (bigBoard) { if (modal.hidden) { bigBoard = null; world.highlight = null; } else bigBoard.update(world.parts, world.wires, world.board, running, world.selected); } }
   plotter.draw();
   if (plotter.visible && plotter.hasData && running) award('plotter');
@@ -669,11 +674,6 @@ function renderBoardPanel() {
 $('board-collapse').onclick = () => { saved.boardHidden = !saved.boardHidden; save(); renderBoardPanel(); renderView(); };
 renderBoardPanel();
 
-// ---------- workspace ----------
-/** A copy of a part beside the original (sandbox only): same settings, no wires. */
-function duplicatePart(src: Part) {
-  if (mode !== 'sandbox' || src.locked || src.type === 'uno') return;
-  const { mount: _m, mdx: _x, mdz: _z, ...props } = JSON.parse(JSON.stringify(src.props));
 // ---------- robot arenas ----------
 /** Walls (and tracks) laid out on the right-hand side of the mat, ready for a robot. */
 const ARENA_AT = { x: 35, z: 2 };
@@ -802,6 +802,11 @@ function updateDash(force = false) {
     ${driving ? '' : '<p class="muted">Press <b>Run</b>, or take it for a test drive.</p>'}`;
 }
 
+// ---------- workspace ----------
+/** A copy of a part beside the original (sandbox only): same settings, no wires. */
+function duplicatePart(src: Part) {
+  if (mode !== 'sandbox' || src.locked || src.type === 'uno') return;
+  const { mount: _m, mdx: _x, mdz: _z, ...props } = JSON.parse(JSON.stringify(src.props));
   const copy = newPart(src.type, { props, rot: src.rot, x: src.x, z: src.z });
   world.addPart(copy);
   world.placeNear(copy, src);
@@ -861,6 +866,8 @@ function renderView() {
   world.view.pinLabels = v.pinLabels;
   world.view.follow = v.follow;
   world.view.arrows = v.arrows ?? true;
+  world.setTrailVisible(v.trail ?? true);
+  $<HTMLInputElement>('view-trail').checked = v.trail ?? true;
   $<HTMLInputElement>('view-arrows').checked = v.arrows ?? true;
   if (world.view.wiresOnTop !== v.wiresOnTop) world.setWiresOnTop(v.wiresOnTop);
   for (const b of viewPop.querySelectorAll<HTMLButtonElement>('[data-labels]')) b.setAttribute('aria-checked', String(b.dataset.labels === v.pinLabels));
@@ -892,6 +899,7 @@ viewPop.addEventListener('change', e => {
   const t = e.target as HTMLInputElement;
   if (t.id === 'view-follow') saved.view!.follow = t.checked;
   if (t.id === 'view-arrows') saved.view!.arrows = t.checked;
+  if (t.id === 'view-trail') saved.view!.trail = t.checked;
   if (t.id === 'view-wires') saved.view!.wiresOnTop = t.checked;
   if (t.id === 'view-board') { saved.boardHidden = !t.checked; renderBoardPanel(); }
   save();
@@ -1033,14 +1041,6 @@ function renderGuide() {
             <button class="mini ghost icon" data-act="del" data-id="${p.id}" title="Delete" aria-label="Delete ${esc(p.name)}">🗑</button>
           </li>`).join('')}
         </ul>
-        <label class="field"><span>Start a new project from a lesson</span>
-          <select data-act="example">
-            <option value="">Choose a lesson…</option>
-            ${LESSONS.map(l => `<option value="${l.id}">${esc(l.title)}</option>`).join('')}
-          </select>
-        </label>
-      </div>`;
-    return;
         <h3>Robot arenas</h3>
         <div class="row arena-row">
           <button class="mini" data-arena="box" title="A walled square to drive around in">▢ Arena</button>
@@ -1049,6 +1049,14 @@ function renderGuide() {
           <button class="mini" data-arena="track" title="A line-following loop">◯ Line track</button>
           <button class="mini ghost" data-arena="clear" title="Remove walls, tracks and pads">Clear</button>
         </div>
+        <label class="field"><span>Start a new project from a lesson</span>
+          <select data-act="example">
+            <option value="">Choose a lesson…</option>
+            ${LESSONS.map(l => `<option value="${l.id}">${esc(l.title)}</option>`).join('')}
+          </select>
+        </label>
+      </div>`;
+    return;
   }
   const done = saved.goals[lesson.id] ?? [];
   const idx = LESSONS.indexOf(lesson);
@@ -1076,6 +1084,8 @@ function renderGuide() {
 }
 
 guideEl.addEventListener('click', e => {
+  const arena = (e.target as HTMLElement).closest<HTMLElement>('[data-arena]')?.dataset.arena;
+  if (arena) { buildArena(arena); return; }
   const act = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset.act;
   const idx = LESSONS.indexOf(lesson);
   switch (act) {
@@ -1084,8 +1094,6 @@ guideEl.addEventListener('click', e => {
     case 'next': goLesson(LESSONS[idx + 1]); break;
     case 'reset-lesson':
       if (confirm('Reset this lesson’s parts and code to the original?')) {
-  const arena = (e.target as HTMLElement).closest<HTMLElement>('[data-arena]')?.dataset.arena;
-  if (arena) { buildArena(arena); return; }
         delete saved.lessons[lesson.id];
         openLesson(lesson, true);
       }
@@ -1966,6 +1974,7 @@ window.addEventListener('keydown', e => {
   if (cam && !e.metaKey && !e.ctrlKey) world.setView(cam);
   if (e.key === 'Escape') {
     if (world.isWiring) world.cancelWiring();
+    else if (world.testDrive) setTestDrive(false);
     else if (!viewPop.hidden) viewPop.hidden = true;
     else if (document.body.classList.contains('focus-mode')) setFocus(false);
     else if (!schematicEl.hidden) setSchematic(false);

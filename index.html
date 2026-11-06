@@ -113,6 +113,7 @@
             <h4>Pin labels on the board</h4>
             <div class="seg" role="radiogroup" id="view-labels"><button data-labels="off" role="radio">Off</button><button data-labels="used" role="radio">Used pins</button><button data-labels="all" role="radio">All pins</button></div>
             <label class="switch-row"><input type="checkbox" id="view-arrows"> <span>Direction arrows on the selected part</span></label>
+            <label class="switch-row"><input type="checkbox" id="view-trail"> <span>Robot trail on the mat</span></label>
             <label class="switch-row"><input type="checkbox" id="view-follow"> <span>Follow the robot as it drives</span></label>
             <label class="switch-row"><input type="checkbox" id="view-wires"> <span>Show wires through parts</span></label>
             <label class="switch-row"><input type="checkbox" id="view-board"> <span>Live board diagram in the side panel</span></label>
@@ -157,6 +158,12 @@
               <form class="phone-form" id="phone-form"><input id="phone-input" placeholder="Message" autocomplete="off" aria-label="Message to send"><button aria-label="Send">➤</button></form>
             </div>
           </div>
+          <div class="robot-dash card" id="robot-dash" hidden>
+            <div class="dash-head"><b>🤖 Robot dashboard</b><button class="mini ghost icon" id="dash-close" aria-label="Hide the dashboard">×</button></div>
+            <div class="dash-actions"><button class="mini" id="dash-drive" aria-pressed="false">🎮 Test drive</button><button class="mini ghost" id="dash-trail" title="Wipe the trail off the mat">Clear trail</button></div>
+            <div id="dash-body"></div>
+          </div>
+          <button class="mini dash-open" id="dash-open" hidden>🤖 Dashboard</button>
           <div class="meter card" id="meter" hidden>
             <div class="meter-head"><b>Multimeter</b><button class="mini ghost icon" id="meter-close" aria-label="Close multimeter">×</button></div>
             <div class="meter-lcd" aria-live="polite"><span id="meter-value">0.00</span><small id="meter-unit">V</small></div>
