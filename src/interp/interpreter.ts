@@ -330,6 +330,9 @@ export class Interpreter {
         if (!Number.isInteger(n) || n <= 0) throw new RuntimeError('Array size must be a positive whole number', d.line);
         sizes.push(n);
       }
+      if (sizes.reduce<number>((t, n) => t * (n ?? 1), 1) > MAX_ARRAY_ITEMS) {
+        throw new RuntimeError(`Array "${d.name}" is too big for the board's memory (an Uno has only 2 KB of RAM)`, d.line);
+      }
       if (d.init && d.init.k !== 'ArrayInit') throw new RuntimeError('Initialize arrays with a list like {1, 2, 3}', d.line);
       const fill = type === 'String' ? '' : 0;
       const self = this;
