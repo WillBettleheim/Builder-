@@ -674,6 +674,134 @@ renderBoardPanel();
 function duplicatePart(src: Part) {
   if (mode !== 'sandbox' || src.locked || src.type === 'uno') return;
   const { mount: _m, mdx: _x, mdz: _z, ...props } = JSON.parse(JSON.stringify(src.props));
+// ---------- robot arenas ----------
+/** Walls (and tracks) laid out on the right-hand side of the mat, ready for a robot. */
+const ARENA_AT = { x: 35, z: 2 };
+function buildArena(kind: string) {
+  if (mode !== 'sandbox') return;
+  if (kind === 'clear') {
+    for (const p of world.parts.filter(p => ['wall', 'track', 'pad'].includes(p.type))) world.removePart(p);
+    save();
+    return;
+  }
+  const { x: cx, z: cz } = ARENA_AT;
+  const wall = (x: number, z: number, rot = 0, len = '20', color = '#8e9aaf') => world.addPart(newPart('wall', { x: cx + x, z: cz + z, rot, props: { len, color } }));
+  const box = () => {
+    for (const x of [-20, 0, 20]) { wall(x, -31); wall(x, 31); }
+    for (const z of [-20, 0, 20]) { wall(-31, z, 1, '20', '#3b82c4'); wall(31, z, 1, '20', '#3b82c4'); }
+  };
+  if (kind === 'box') box();
+  if (kind === 'maze') {
+    box();
+    wall(-10, -11, 0, '20', '#e2533b'); wall(10, 11, 0, '20', '#e2533b'); // two baffles make an S-shaped path
+    wall(-20, -11, 0, '5', '#e2533b'); wall(20, 11, 0, '5', '#e2533b');
+  }
+  if (kind === 'slalom') [-21, -7, 7, 21].forEach((x, i) => wall(x, i % 2 ? 6 : -6, 1, '5', '#f2b705'));
+  if (kind === 'track') world.addPart(newPart('track', { x: cx, z: cz }));
+  world.resetView();
+  world.audio.sfx('place');
+  save();
+  toast(`Arena built on the right of the mat. Add a robot from the <b>Robotics</b> tray and put it inside.`, 'good', 4500);
+}
+
+// ---------- robot dashboard and test drive ----------
+const dashEl = $('robot-dash');
+let lap = { last: NaN, sum: 0, start: 0, n: 0, best: null as number | null };
+const robotPart = () => (world.testDrive && world.parts.find(p => p.id === world.testDrive!.id)) || world.parts.find(p => p.type === 'robot' || p.type === 'bolt');
+const dashKey = () => (mode === 'lessons' ? lesson.id : activeProject().id);
+
+function setTestDrive(on: boolean) {
+  const r = robotPart();
+  world.testDrive = on && r ? { id: r.id, keys: new Set() } : null;
+  $('dash-drive').setAttribute('aria-pressed', String(!!world.testDrive));
+  $('dash-drive').textContent = world.testDrive ? '■ Stop driving' : '🎮 Test drive';
+  if (world.testDrive) toast('Test drive: <kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> (or the arrow keys) to drive. <kbd>Esc</kbd> to stop.', 'hint', 5000);
+  world.kick();
+}
+$('dash-drive').onclick = () => setTestDrive(!world.testDrive);
+$('dash-trail').onclick = () => world.clearTrail();
+$('dash-close').onclick = () => { saved.dashHidden = true; save(); updateDash(true); };
+$('dash-open').onclick = () => { saved.dashHidden = false; save(); updateDash(true); };
+const DRIVE_KEYS: Record<string, string> = { w: 'w', a: 'a', s: 's', d: 'd', arrowup: 'w', arrowleft: 'a', arrowdown: 's', arrowright: 'd' };
+window.addEventListener('keydown', e => {
+  const k = DRIVE_KEYS[e.key.toLowerCase()];
+  if (!world.testDrive || !k || (e.target as HTMLElement).closest?.('input, textarea, select')) return;
+  world.testDrive.keys.add(k);
+  e.preventDefault();
+  e.stopImmediatePropagation(); // don't also nudge the selected part
+}, true);
+window.addEventListener('keyup', e => { const k = DRIVE_KEYS[e.key.toLowerCase()]; if (k) world.testDrive?.keys.delete(k); });
+window.addEventListener('blur', () => world.testDrive?.keys.clear());
+
+/** Lap timing on a line track: a lap is a full circle around the track's middle. */
+function trackLap(r: Part, now: number) {
+  const t = world.parts.find(p => p.type === 'track');
+  const pose = r.state.pose;
+  if (!t || !pose) return;
+  const ang = Math.atan2(pose.z - t.z, pose.x - t.x);
+  if (Number.isNaN(lap.last)) { lap.last = ang; lap.start = now; return; }
+  let d = ang - lap.last;
+  if (d > Math.PI) d -= 2 * Math.PI;
+  if (d < -Math.PI) d += 2 * Math.PI;
+  lap.sum += d;
+  lap.last = ang;
+  if (Math.abs(lap.sum) >= 2 * Math.PI) {
+    const time = now - lap.start;
+    lap.n++;
+    lap.sum = 0;
+    lap.start = now;
+    const best = (saved.bestLaps ??= {})[dashKey()];
+    if (best == null || time < best) {
+      saved.bestLaps![dashKey()] = time;
+      save();
+      if (lap.n > 0) toast(`🏁 New best lap: <b>${(time / 1000).toFixed(2)} s</b>`, 'good', 3500);
+      world.audio.sfx('badge');
+    } else world.audio.sfx('goal');
+  }
+}
+
+let dashAt = 0, dashWasRunning = false;
+const stripTags = (h: string) => h.replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&');
+function updateDash(force = false) {
+  if (!force && performance.now() - dashAt < 100) return;
+  dashAt = performance.now();
+  const r = robotPart();
+  dashEl.hidden = !r || !!saved.dashHidden;
+  $('dash-open').hidden = !r || !saved.dashHidden;
+  $('stage').classList.toggle('has-dash', !dashEl.hidden);
+  if (!r || dashEl.hidden) return;
+  // a fresh run, or driving by hand, starts lap timing over
+  const driving = running || !!world.testDrive;
+  if (driving && !dashWasRunning) lap = { last: NaN, sum: 0, start: 0, n: 0, best: null };
+  dashWasRunning = driving;
+  const now = world.testDrive ? performance.now() : world.board.time;
+  if (driving) trackLap(r, now);
+  const st = r.state, pose = world.poseOf(r);
+  const max = r.type === 'bolt' ? 16 : 22;
+  const bar = (v: number) => `<div class="dash-bar"><i style="${v >= 0 ? `bottom:50%;height:${Math.min(50, (v / max) * 50)}%` : `top:50%;height:${Math.min(50, (-v / max) * 50)}%`}"></i></div>`;
+  const bearing = (((-pose.a * 180) / Math.PI) % 360 + 360) % 360;
+  const dir = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][Math.round(bearing / 45) % 8];
+  const vl = st.vl ?? 0, vr = st.vr ?? 0;
+  const sensors = world.parts.filter(p => p.props.mount === r.id && p.type !== 'uno' && PARTS[p.type].readout)
+    .map(p => `<li><b>${esc(PARTS[p.type].name.replace(/\s*\(.*\)/, ''))}</b><span>${esc(stripTags(PARTS[p.type].readout!(p)))}</span></li>`);
+  if (r.type === 'bolt') sensors.unshift(`<li><b>Bolt</b><span>${esc(stripTags(PARTS.bolt.readout!(r)))}</span></li>`);
+  const best = saved.bestLaps?.[dashKey()];
+  const onTrack = world.parts.some(p => p.type === 'track');
+  $('dash-body').innerHTML = `
+    <div class="dash-top">
+      <div class="dash-wheels">${bar(vl)}${bar(vr)}<small>L</small><small>R</small></div>
+      <dl class="dash-stats">
+        <div><dt>Speed</dt><dd>${((vl + vr) / 2).toFixed(1)} <small>cm/s</small></dd></div>
+        <div><dt>Heading</dt><dd>${Math.round(bearing)}° <small>${dir}</small></dd></div>
+        <div><dt>Distance</dt><dd>${(st.travelled ?? 0).toFixed(0)} <small>cm</small></dd></div>
+        <div><dt>Bumps</dt><dd class="${st.bumps ? 'bad' : ''}">${st.bumps ? 'yes' : 'none'}</dd></div>
+      </dl>
+    </div>
+    ${onTrack ? `<div class="dash-lap"><span>🏁 Lap ${lap.n + 1}: <b>${driving && lap.start ? ((now - lap.start) / 1000).toFixed(1) : '0.0'} s</b></span><span>Best: <b>${best != null ? `${(best / 1000).toFixed(2)} s` : '—'}</b></span></div>` : ''}
+    ${sensors.length ? `<ul class="dash-sensors">${sensors.join('')}</ul>` : '<p class="muted">Mount sensors on the robot’s deck to see them here.</p>'}
+    ${driving ? '' : '<p class="muted">Press <b>Run</b>, or take it for a test drive.</p>'}`;
+}
+
   const copy = newPart(src.type, { props, rot: src.rot, x: src.x, z: src.z });
   world.addPart(copy);
   world.placeNear(copy, src);
@@ -913,6 +1041,14 @@ function renderGuide() {
         </label>
       </div>`;
     return;
+        <h3>Robot arenas</h3>
+        <div class="row arena-row">
+          <button class="mini" data-arena="box" title="A walled square to drive around in">▢ Arena</button>
+          <button class="mini" data-arena="maze" title="Walls with a path through them">⌗ Maze</button>
+          <button class="mini" data-arena="slalom" title="Posts to weave between">⋮ Slalom</button>
+          <button class="mini" data-arena="track" title="A line-following loop">◯ Line track</button>
+          <button class="mini ghost" data-arena="clear" title="Remove walls, tracks and pads">Clear</button>
+        </div>
   }
   const done = saved.goals[lesson.id] ?? [];
   const idx = LESSONS.indexOf(lesson);
@@ -948,6 +1084,8 @@ guideEl.addEventListener('click', e => {
     case 'next': goLesson(LESSONS[idx + 1]); break;
     case 'reset-lesson':
       if (confirm('Reset this lesson’s parts and code to the original?')) {
+  const arena = (e.target as HTMLElement).closest<HTMLElement>('[data-arena]')?.dataset.arena;
+  if (arena) { buildArena(arena); return; }
         delete saved.lessons[lesson.id];
         openLesson(lesson, true);
       }
