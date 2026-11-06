@@ -150,6 +150,7 @@ function loadParts(parts: (SavedPart | PartSpec)[], wires?: Wire[], idPrefix?: s
     const id = isSafeId((s as SavedPart).id) ? (s as SavedPart).id : idPrefix ? `${idPrefix}-${i}` : undefined;
     world.addPart(newPart(s.type, { ...c, id, locked: s.type === 'uno' || (s as SavedPart).locked === true }));
   });
+  wires = wires && cleanWires(wires);
   world.settleMounted();
   lastWireCount = (wires ?? []).length;
   world.setWires(wires ?? world.parts.flatMap((p, i) => {
@@ -267,6 +268,13 @@ let goalMem: Record<string, any>[] = [];
 const sentText: string[] = [];
 
 let hadError = false;
+function asRuntimeError(e: unknown): RuntimeError {
+  if (e instanceof RuntimeError) return e;
+  console.error(e);
+  const deep = e instanceof RangeError && /call stack/i.test(e.message);
+  return new RuntimeError(deep ? 'The sketch ran out of memory (too many nested calls)' : 'The simulator hit an internal problem running this line', interp?.currentLine ?? 1);
+}
+
 function showError(err: CompileError | RuntimeError, kind: string) {
   hadError = true;
   world.audio.sfx('error');
@@ -287,14 +295,14 @@ function run() {
   world.audio.unlock();
   let prog;
   try {
+    if (editor.value.length > MAX_CODE) throw new CompileError(`This sketch is too long (over ${MAX_CODE / 1000}k characters) for the board's memory`, 1);
     prog = parse(editor.value);
   } catch (e) {
-    if (e instanceof CompileError) {
-      showError(e, 'Compile');
-      setStatus('error', 'Compile error');
-      return;
-    }
-    throw e;
+    // code nested hundreds of levels deep overflows the parser itself
+    const err = e instanceof CompileError ? e : new CompileError('This code is nested too deeply to compile. Split it into smaller functions', 1);
+    showError(err, 'Compile');
+    setStatus('error', 'Compile error');
+    return;
   }
   world.board.reset();
   serialOut.textContent = '';
@@ -351,14 +359,10 @@ world.onFrame = dt => {
     try {
       if (!paused && b.time < b.target) gen.next();
     } catch (e) {
-      if (e instanceof RuntimeError) {
-        showError(e, 'Runtime');
-        stop(true);
-        setStatus('error', 'Crashed');
-      } else {
-        console.error(e);
-        stop();
-      }
+      // anything else (say, a stack overflow) still stops the sketch with a message
+      showError(asRuntimeError(e), 'Runtime');
+      stop(true);
+      setStatus('error', 'Crashed');
     }
     // text on screen only needs to change about 15 times a second
     if (performance.now() - clockAt > 66) {
@@ -1388,12 +1392,12 @@ function importProject() {
   input.onchange = async () => {
     const file = input.files?.[0];
     if (!file) return;
+    // a real project is a few KB; refuse anything big enough to freeze the tab
+    if (file.size > 2_000_000) { toast('That file is too big to be a Builder project.', 'error'); return; }
     try {
       const data = JSON.parse(await file.text());
       if (typeof data.code !== 'string' || !Array.isArray(data.parts)) throw new Error('bad file');
       const parts = cleanParts(data.parts);
-    // a real project is a few KB; refuse anything big enough to freeze the tab
-    if (file.size > 2_000_000) { toast('That file is too big to be a Builder project.', 'error'); return; }
       createProject((typeof data.name === 'string' ? data.name : file.name.replace(/\.json$/i, '')).slice(0, 50), { code: cleanCode(data.code), parts, wires: cleanWires(data.wires) });
       toast(`Imported <b>${esc(file.name)}</b>`, 'good', 3000);
     } catch {
@@ -1915,13 +1919,10 @@ function stepOnce() {
   try {
     gen.next();
   } catch (e) {
-    if (e instanceof RuntimeError) {
-      showError(e, 'Runtime');
-      stop(true);
-      setStatus('error', 'Crashed');
-      return;
-    }
-    throw e;
+    showError(asRuntimeError(e), 'Runtime');
+    stop(true);
+    setStatus('error', 'Crashed');
+    return;
   } finally {
     b.target = b.time;
     if (interp) interp.stepMode = false;
