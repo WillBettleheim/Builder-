@@ -3,6 +3,18 @@
 export interface Question { q: string; a: string[]; correct: number; why: string }
 
 export const QUIZZES: Record<string, Question[]> = {
+  'robot-deliver': [
+    { q: 'How does this robot know how far it has driven?', a: ['By timing: speed × time', 'The gripper measures it', 'It can’t move a set distance'], correct: 0, why: 'Without encoders, a robot estimates distance from how fast it goes and for how long.' },
+    { q: 'What does grip.write(20) do?', a: ['Closes the jaws', 'Opens the jaws', 'Drives 20 cm'], correct: 0, why: 'Below 40° the jaws close around the cube; above 70° they open.' },
+  ],
+  'robot-compass': [
+    { q: 'The robot faces 350° and wants 10°. Which way, and how far?', a: ['Right, 20°', 'Left, 340°', 'Right, 340°'], correct: 0, why: 'Headings wrap around at 360, so the short way from 350 to 10 is 20° to the right.' },
+    { q: 'Which heading is west?', a: ['270°', '90°', '180°'], correct: 0, why: 'Going clockwise from north: 90 east, 180 south, 270 west.' },
+  ],
+  'robot-colors': [
+    { q: 'A pad reads R 890, G 780, B 150. What colour is it?', a: ['Yellow', 'Red', 'Blue'], correct: 0, why: 'Red and green light together look yellow; blue is low.' },
+    { q: 'Why print a colour only when it changes?', a: ['So each pad is named once, not hundreds of times', 'The sensor needs a rest', 'Serial can only print once'], correct: 0, why: 'loop() runs many times while the robot crosses a pad. Remembering the last colour avoids repeats.' },
+  ],
   'bolt-hello': [
     { q: 'What does head.write(180) do to Bolt?', a: ['Turns its head to look left', 'Drives it forward', 'Lights its face'], correct: 0, why: 'The head sits on a servo: 90 is straight ahead, 180 is left and 0 is right.' },
     { q: 'Why call face.shutdown(0, false) first?', a: ['The LED matrix chip starts asleep', 'It turns the robot off', 'It clears the servo'], correct: 0, why: 'The MAX7219 chip powers up asleep, so nothing shows until you wake it.' },

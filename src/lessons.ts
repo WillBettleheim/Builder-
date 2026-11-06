@@ -3723,6 +3723,231 @@ void loop() {
   },
 );
 
+// ---------- robot add-ons: gripper, compass and colour sensor ----------
+const gripperOf = (c: GoalCtx) => c.part('gripper');
+
+LESSONS.push(
+  {
+    id: 'robot-deliver',
+    title: 'Robot: Delivery',
+    icon: 'gripper',
+    level: 'Robotics',
+    intro: `
+<p>Real warehouse robots fetch and carry. Yours has a <strong>servo gripper</strong> on the front: <code>grip.write(90)</code> opens the jaws, <code>grip.write(20)</code> closes them around whatever is between them.</p>
+<pre>open → drive to the cube → close → turn around → drive back → open</pre>
+<p>Robots without wheel encoders measure distance with <strong>time</strong>: at speed 150 this robot covers about 13 cm a second, and spinning on the spot for about 1.65 s turns it right round.</p>
+<p><strong>Your job:</strong> bring the red cube home and drop it on the pad behind the robot.</p>`,
+    parts: [
+      boardOn('robot-deliver'),
+      { type: 'robot', x: 0, z: 20, pins: ROBOT_PINS },
+      { type: 'gripper', x: 0, z: 0, pins: { sig: 3 }, props: { mount: 'robot-deliver-1', mdx: 0, mdz: -8.5 } },
+      { type: 'cube', x: 0, z: -7.2 },
+      { type: 'pad', x: 0, z: 32 },
+    ],
+    code: `#include <Servo.h>
+
+Servo grip;
+${MOTOR_SETUP}
+void setup() {
+${MOTOR_PINMODES}
+  grip.attach(3);
+  grip.write(90);         // jaws open
+  delay(500);
+
+  drive(150, 150);        // to the cube
+  delay(1160);
+  drive(0, 0);
+
+  // TODO: close the jaws, turn around, drive back and let go
+}
+
+void loop() {}
+`,
+    solution: `#include <Servo.h>
+
+Servo grip;
+${MOTOR_SETUP}
+void setup() {
+${MOTOR_PINMODES}
+  grip.attach(3);
+  grip.write(90);         // jaws open
+  delay(500);
+
+  drive(150, 150);        // to the cube
+  delay(1160);
+  drive(0, 0);
+  grip.write(20);         // grab it
+  delay(500);
+
+  drive(-150, 150);       // turn right round
+  delay(1650);
+  drive(150, 150);        // and back home
+  delay(1160);
+  drive(0, 0);
+  grip.write(90);         // let go
+}
+
+void loop() {}
+`,
+    goals: [
+      { text: 'Grab the cube', check: (c, m) => seen(m, 'x', !!gripperOf(c)?.state.holding) },
+      { text: 'Carry it at least 20 cm', check: (c, m) => { const cb = c.part('cube'); if (!cb) return !!m.x; m.from ??= [cb.x, cb.z]; return seen(m, 'x', !!cb.state.heldBy && Math.hypot(cb.x - m.from[0], cb.z - m.from[1]) >= 20); } },
+      { text: 'Drop it on the pad', check: (c, m) => { const cb = c.part('cube'), pd = c.part('pad'); return seen(m, 'x', !!cb && !!pd && !cb.state.heldBy && Math.abs(cb.x - pd.x) < 3 && Math.abs(cb.z - pd.z) < 3 && (cb.group?.position.y ?? 1) < 0.05); } },
+    ],
+  },
+  {
+    id: 'robot-compass',
+    title: 'Robot: Steer by Compass',
+    icon: 'compass',
+    level: 'Robotics',
+    intro: `
+<p>Timing a turn is a guess. A <strong>compass</strong> knows: it reads the robot’s heading in degrees.</p>
+<pre>  0 = north      90 = east
+180 = south     270 = west</pre>
+<p>To face a heading, keep turning until the difference is tiny. The difference has to wrap around: from 350° to 10° is only 20°, not 340°:</p>
+<pre>int diff = (target - now + 540) % 360 - 180;   // -180 … 180</pre>
+<p>Positive means turn right, negative means turn left. <strong>Challenge:</strong> drive a perfect square with turns to 0°, 90°, 180° and 270°.</p>`,
+    parts: [
+      boardOn('robot-compass'),
+      { type: 'robot', x: 0, z: 10, pins: ROBOT_PINS },
+      { type: 'compass', x: 0, z: 0, pins: { sda: 18, scl: 19 }, props: { mount: 'robot-compass-1', mdx: 3.2, mdz: -6 } },
+    ],
+    code: `#include <QMC5883LCompass.h>
+
+QMC5883LCompass compass;
+${MOTOR_SETUP}
+int heading() {
+  compass.read();
+  return compass.getAzimuth();
+}
+
+void setup() {
+  Serial.begin(9600);
+${MOTOR_PINMODES}
+  compass.init();
+}
+
+void loop() {
+  Serial.println(heading());
+  drive(110, -110);   // spinning right... TODO: stop when facing east (90)
+  delay(20);
+}
+`,
+    solution: `#include <QMC5883LCompass.h>
+
+QMC5883LCompass compass;
+${MOTOR_SETUP}
+int heading() {
+  compass.read();
+  return compass.getAzimuth();
+}
+
+/** Turn on the spot until the robot faces the target heading. */
+void turnTo(int target) {
+  while (true) {
+    int now = heading();
+    Serial.println(now);
+    int diff = (target - now + 540) % 360 - 180;
+    if (diff > 3) drive(110, -110);        // turn right
+    else if (diff < -3) drive(-110, 110);  // turn left
+    else break;
+    delay(20);
+  }
+  drive(0, 0);
+  delay(300);
+}
+
+void setup() {
+  Serial.begin(9600);
+${MOTOR_PINMODES}
+  compass.init();
+  turnTo(90);           // face east first
+  delay(1500);
+  for (int side = 0; side < 4; side++) {
+    drive(160, 160);
+    delay(1000);
+    drive(0, 0);
+    turnTo((180 + side * 90) % 360);
+  }
+}
+
+void loop() {}
+`,
+    goals: [
+      { text: 'Read the heading in the Serial Monitor', check: c => serialLines(c.serial).filter(l => /^\d+$/.test(l)).length >= 3 },
+      { text: 'Face east (90°) and stop there', check: (c, m) => { const h = c.part('compass')?.state.heading ?? 0; const r = robotOf(c); const ok = !!r?.state.pose && Math.abs(h - 90) <= 4 && Math.abs(r.state.vl ?? 0) + Math.abs(r.state.vr ?? 0) < 0.5; return seen(m, 'x', heldFor(c, m, 'still', ok) > 600); } },
+      { text: 'Challenge: drive a square using the compass', check: (c, m) => { const t = robotTrack(c, m); return seen(m, 'x', t.travelled >= 45 && t.turned >= 1.8 * Math.PI && t.fromHome < 8); } },
+    ],
+  },
+  {
+    id: 'robot-colors',
+    title: 'Robot: Find the Colour',
+    icon: 'colorsensor',
+    level: 'Robotics',
+    intro: `
+<p>A <strong>colour sensor</strong> under the robot shines white light at the floor and measures how much <em>red</em>, <em>green</em> and <em>blue</em> bounces back. Each reads 0–1023 with <code>analogRead()</code>.</p>
+<pre>red pad:    R high, G low,  B low
+yellow pad: R high, G high, B low
+blue pad:   R low,  G low,  B high</pre>
+<p>Drive along the row of pads, say each colour you cross, and <strong>stop on the red one</strong>. This is how sorting machines and line-following competitions read markers on the floor.</p>`,
+    parts: [
+      boardOn('robot-colors'),
+      { type: 'robot', x: -34, z: 8, rot: 1, pins: ROBOT_PINS },
+      { type: 'colorsensor', x: 0, z: 0, pins: { r: 14, g: 15, b: 16 }, props: { mount: 'robot-colors-1', mdx: 0, mdz: -7.8 } },
+      { type: 'pad', x: -10, z: 8, props: { color: 'blue' } },
+      { type: 'pad', x: 4, z: 8, props: { color: 'yellow' } },
+      { type: 'pad', x: 18, z: 8, props: { color: 'red' } },
+    ],
+    code: `${MOTOR_SETUP}
+void setup() {
+  Serial.begin(9600);
+${MOTOR_PINMODES}
+}
+
+void loop() {
+  int r = analogRead(A0), g = analogRead(A1), b = analogRead(A2);
+  Serial.print(r); Serial.print(" "); Serial.print(g); Serial.print(" "); Serial.println(b);
+
+  drive(120, 120);   // TODO: print the colour's name, and stop on red
+  delay(50);
+}
+`,
+    solution: `${MOTOR_SETUP}
+String lastSeen = "";
+
+String colourName(int r, int g, int b) {
+  if (r > 600 && g < 400 && b < 400) return "RED";
+  if (r > 600 && g > 600 && b < 400) return "YELLOW";
+  if (b > 600 && r < 400) return "BLUE";
+  return "MAT";
+}
+
+void setup() {
+  Serial.begin(9600);
+${MOTOR_PINMODES}
+}
+
+void loop() {
+  int r = analogRead(A0), g = analogRead(A1), b = analogRead(A2);
+  Serial.print(r); Serial.print(" "); Serial.print(g); Serial.print(" "); Serial.println(b);
+  String name = colourName(r, g, b);
+  if (name != lastSeen) {   // say each colour once, as we reach it
+    Serial.println(name);
+    lastSeen = name;
+  }
+  if (name == "RED") drive(0, 0);
+  else drive(120, 120);
+  delay(20);
+}
+`,
+    goals: [
+      { text: 'Read R, G and B in the Serial Monitor', check: c => serialLines(c.serial).some(l => /^\d+ \d+ \d+$/.test(l)) },
+      { text: 'Name the colours it crosses: BLUE and YELLOW', check: c => /BLUE/.test(c.serial) && /YELLOW/.test(c.serial) },
+      { text: 'Stop on the red pad', check: (c, m) => { const rgb = c.part('colorsensor')?.state.rgb ?? [0, 0, 0]; const r = robotOf(c); const ok = !!r?.state.pose && rgb[0] > 600 && rgb[1] < 400 && Math.abs(r.state.vl ?? 0) + Math.abs(r.state.vr ?? 0) < 0.5; return seen(m, 'x', heldFor(c, m, 'still', ok) > 800); } },
+    ],
+  },
+);
+
 const ORDER = [
   'blink', 'circuit', 'breadboard', 'fade', 'chaser', 'rgb', 'serial',
   'seg7', 'scoreboard', 'lcd', 'oled', 'matrix', 'neopixel',
@@ -3730,7 +3955,7 @@ const ORDER = [
   'servo', 'stepper', 'motor', 'relay',
   'bug-pinmode', 'bug-wiring', 'bug-button', 'bug-array', 'bug-compare',
   'bolt-hello', 'bolt-moods', 'bolt-follow', 'bolt-scan',
-  'robot-drive', 'bumper-bot', 'phone-robot', 'odometry', 'line-follow', 'patrol', 'avoider', 'light-seeker', 'arm-pick',
+  'robot-drive', 'bumper-bot', 'phone-robot', 'odometry', 'robot-compass', 'robot-deliver', 'robot-colors', 'line-follow', 'patrol', 'avoider', 'light-seeker', 'arm-pick',
   'thermo', 'weather', 'plant', 'smoke', 'motion', 'lock', 'parking', 'phone', 'logger',
 ];
 LESSONS.sort((a, b) => ORDER.indexOf(a.id) - ORDER.indexOf(b.id));
