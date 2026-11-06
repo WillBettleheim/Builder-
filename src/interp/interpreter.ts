@@ -610,7 +610,11 @@ export class Interpreter {
 
   private applyOp(op: string, a: Value, b: Value, ta: string, tb: string, line: number): Value {
     if (typeof a === 'string' || typeof b === 'string') {
-      if (op === '+') return this.toText(a, ta) + this.toText(b, tb);
+      if (op === '+') {
+        const s = this.toText(a, ta) + this.toText(b, tb);
+        if (s.length > MAX_STRING) throw new RuntimeError('This String grew too long: the board would run out of memory', line);
+        return s;
+      }
       if (op === '==') return a === b ? 1 : 0;
       if (op === '!=') return a !== b ? 1 : 0;
       throw new RuntimeError(`Cannot use "${op}" with text`, line);
