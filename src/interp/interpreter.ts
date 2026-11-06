@@ -706,14 +706,19 @@ export class Interpreter {
       return 0;
     }
     const name = String(args[0] ?? '');
+    const has = Object.hasOwn(files, name);
     switch (prop) {
-      case 'exists': return name in files ? 1 : 0;
-      case 'remove': { const had = name in files; delete files[name]; return had ? 1 : 0; }
+      case 'exists': return has ? 1 : 0;
+      case 'remove': { if (has) delete files[name]; return has ? 1 : 0; }
       case 'mkdir': case 'rmdir': return 1;
       case 'open': {
         const write = args[1] === 1;
-        if (!write && !(name in files)) return 0; // reading a file that isn't there fails, like the real library
-        if (write) files[name] ??= '';
+        if (!write && !has) return 0; // reading a file that isn't there fails, like the real library
+        if (write && !has) {
+          if (!SD_NAME.test(name)) throw new RuntimeError(`"${name.slice(0, 40)}" isn't a file name the card accepts. Use letters and digits, like "log.txt"`, n.line);
+          if (Object.keys(files).length >= SD_MAX_FILES) return 0; // card full of files: open fails
+          files[name] = '';
+        }
         return { name, write, pos: 0, open: true, files };
       }
     }
@@ -1187,6 +1192,8 @@ export class Interpreter {
         name: obj.name,
         write: t => {
           if (!f.write) throw new RuntimeError(`"${obj.name}" was opened for reading. Use SD.open(name, FILE_WRITE) to write to it`, n.line);
+          const used = (Object.values(f.files) as string[]).reduce((sum, x) => sum + x.length, 0);
+          if (used + t.length > SD_MAX_BYTES) throw new RuntimeError('The SD card is full. Erase it from the card\'s panel, or write less', n.line);
           f.files[f.name] = (f.files[f.name] ?? '') + t;
         },
         available: () => Math.max(0, (f.files[f.name] ?? '').length - f.pos),
