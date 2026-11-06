@@ -2,6 +2,7 @@
 // Students send their progress back as a report link, and the teacher pastes
 // those links into a dashboard that lives entirely in their own browser.
 import { pack, unpack } from './codec';
+import { escapeHtml } from './html';
 
 export interface ClassInfo { code: string; name: string; teacher: string }
 export interface Report {
@@ -18,7 +19,28 @@ export interface TeacherStore { classes: (ClassInfo & { created: number })[]; re
 export interface LessonRef { id: string; title: string; level: string; goals: number }
 
 const KEY = 'builder-teacher-v1';
-const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
+const esc = escapeHtml;
+
+/** Object keys that would reach the prototype instead of making a normal entry. */
+const BAD_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+const str = (v: unknown, n: number) => String(v ?? '').slice(0, n);
+const count = (v: unknown) => Math.max(0, Math.min(1e6, Math.floor(Number(v) || 0)));
+
+/** A report with every field forced to the right type and size, or null. */
+export function cleanReport(d: any): Report | null {
+  if (d?.v !== 1 || typeof d.c !== 'string' || typeof d.n !== 'string' || !Array.isArray(d.done)) return null;
+  const n = str(d.n, 60);
+  if (!n.trim() || BAD_KEYS.has(n.trim().toLowerCase())) return null;
+  const part: Record<string, number> = {};
+  if (d.part && typeof d.part === 'object') {
+    for (const [k, v] of Object.entries(d.part).slice(0, 500)) if (typeof v === 'number' && !BAD_KEYS.has(k)) part[k.slice(0, 64)] = count(v);
+  }
+  return {
+    v: 1, c: str(d.c, 12), n, t: Math.max(0, Number(d.t) || 0),
+    done: d.done.filter((x: unknown) => typeof x === 'string').slice(0, 500).map((x: string) => x.slice(0, 64)), part,
+    badges: count(d.badges), quiz: count(d.quiz),
+  };
+}
 
 export function loadTeacher(): TeacherStore {
   try {
