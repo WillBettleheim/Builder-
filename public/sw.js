@@ -25,8 +25,11 @@ self.addEventListener('fetch', event => {
     event.respondWith(
       fetch(req)
         .then(res => {
-          const copy = res.clone();
-          caches.open(CACHE).then(c => c.put('./index.html', copy));
+          // only a real app page may replace the offline copy, never an error page
+          if (res.ok && res.type === 'basic' && (res.headers.get('content-type') ?? '').includes('text/html')) {
+            const copy = res.clone();
+            caches.open(CACHE).then(c => c.put('./index.html', copy));
+          }
           return res;
         })
         .catch(() => caches.match('./index.html')),
