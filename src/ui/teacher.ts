@@ -36,7 +36,8 @@ export function cleanReport(d: any): Report | null {
     for (const [k, v] of Object.entries(d.part).slice(0, 500)) if (typeof v === 'number' && !BAD_KEYS.has(k)) part[k.slice(0, 64)] = count(v);
   }
   return {
-    v: 1, c: str(d.c, 12), n, t: Math.max(0, Number(d.t) || 0),
+    // a report "from the future" would block every real one after it (newest wins)
+    v: 1, c: str(d.c, 12), n, t: Math.min(Date.now() + 86_400_000, Math.max(0, Number(d.t) || 0)),
     done: d.done.filter((x: unknown) => typeof x === 'string').slice(0, 500).map((x: string) => x.slice(0, 64)), part,
     badges: count(d.badges), quiz: count(d.quiz),
   };
