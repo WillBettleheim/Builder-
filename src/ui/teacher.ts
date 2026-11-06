@@ -45,7 +45,18 @@ export function cleanReport(d: any): Report | null {
 export function loadTeacher(): TeacherStore {
   try {
     const s = JSON.parse(localStorage.getItem(KEY) ?? 'null');
-    if (s && Array.isArray(s.classes) && s.reports && typeof s.reports === 'object') return s;
+    if (!s || !Array.isArray(s.classes)) return store;
+    // re-check what comes back: other pages on the same site share this storage
+    for (const c of s.classes) {
+      if (!c || typeof c.code !== 'string' || !/^[A-Z0-9]{1,12}$/.test(c.code)) continue;
+      store.classes.push({ code: c.code, name: str(c.name, 60), teacher: str(c.teacher, 60), created: Number(c.created) || 0 });
+      const byStudent: Record<string, Report> = {};
+      for (const [k, r] of Object.entries(s.reports?.[c.code] ?? {})) {
+        const ok = cleanReport(r);
+        if (ok && !BAD_KEYS.has(k)) byStudent[k] = ok;
+      }
+      store.reports[c.code] = byStudent;
+    }
   } catch { /* fall through to a fresh store */ }
   return { classes: [], reports: {} };
 }
@@ -67,8 +78,8 @@ export const reportLink = async (r: Report) => `${base()}#report=${await pack(r)
 export async function readInvite(token: string): Promise<ClassInfo | null> {
   try {
     const d = await unpack(token);
-    if (typeof d?.c !== 'string' || typeof d.n !== 'string') return null;
-    return { code: d.c.slice(0, 12), name: String(d.n).slice(0, 60), teacher: String(d.t ?? '').slice(0, 60) };
+    if (typeof d?.c !== 'string' || !/^[A-Z0-9]{1,12}$/.test(d.c) || typeof d.n !== 'string') return null;
+    return { code: d.c, name: String(d.n).slice(0, 60), teacher: String(d.t ?? '').slice(0, 60) };
   } catch {
     return null;
   }
@@ -76,15 +87,7 @@ export async function readInvite(token: string): Promise<ClassInfo | null> {
 
 export async function readReport(token: string): Promise<Report | null> {
   try {
-    const d = await unpack(token);
-    if (d?.v !== 1 || typeof d.c !== 'string' || typeof d.n !== 'string' || !Array.isArray(d.done)) return null;
-    const part: Record<string, number> = {};
-    for (const [k, v] of Object.entries(d.part ?? {})) if (typeof v === 'number') part[String(k)] = v;
-    return {
-      v: 1, c: d.c, n: String(d.n).slice(0, 60), t: Number(d.t) || 0,
-      done: d.done.filter((x: unknown) => typeof x === 'string'), part,
-      badges: Number(d.badges) || 0, quiz: Number(d.quiz) || 0,
-    };
+    return cleanReport(await unpack(token));
   } catch {
     return null;
   }
