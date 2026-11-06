@@ -43,6 +43,7 @@ export function cleanReport(d: any): Report | null {
 }
 
 export function loadTeacher(): TeacherStore {
+  const store: TeacherStore = { classes: [], reports: {} };
   try {
     const s = JSON.parse(localStorage.getItem(KEY) ?? 'null');
     if (!s || !Array.isArray(s.classes)) return store;
@@ -58,7 +59,7 @@ export function loadTeacher(): TeacherStore {
       store.reports[c.code] = byStudent;
     }
   } catch { /* fall through to a fresh store */ }
-  return { classes: [], reports: {} };
+  return store;
 }
 
 export function saveTeacher(store: TeacherStore) {
@@ -187,7 +188,8 @@ export function dashboardHtml(store: TeacherStore, code: string | null, lessons:
 
 /** A spreadsheet of the class: one row per student, one column per lesson. */
 export function classCsv(store: TeacherStore, code: string, lessons: LessonRef[]): string {
-  const q = (s: string) => `"${s.replace(/"/g, '""')}"`;
+  // a leading = + - @ makes spreadsheets run the cell as a formula; a quote keeps it text
+  const q = (s: string) => `"${(/^[=+\-@\t\r]/.test(s) ? `'${s}` : s).replace(/"/g, '""')}"`;
   const rows = [['Student', 'Lessons finished', 'Badges', 'Quiz first try', 'Last report', ...lessons.map(l => l.title)].map(q).join(',')];
   for (const r of Object.values(store.reports[code] ?? {})) {
     rows.push([q(r.n), r.done.length, r.badges, r.quiz, q(new Date(r.t).toISOString()), ...lessons.map(l => (r.done.includes(l.id) ? 'done' : r.part[l.id] ? `${r.part[l.id]}/${l.goals}` : ''))].join(','));
