@@ -121,8 +121,19 @@ export function coerce(type: string, v: Value): Value {
 function formatFloat(v: number, digits = 2): string {
   if (Number.isNaN(v)) return 'nan';
   if (!Number.isFinite(v)) return v > 0 ? 'inf' : '-inf';
-  return v.toFixed(digits);
+  return v.toFixed(Math.max(0, Math.min(20, Math.trunc(Number(digits)) || 0)));
 }
+
+/** print(x, base) and String(x, base): BIN, OCT, DEC and HEX, or any base 2–36. */
+const inBase = (v: number, base: number) => (v >>> 0).toString(Math.max(2, Math.min(36, Math.trunc(Number(base)) || 10))).toUpperCase();
+
+/** The Uno has 2 KB of RAM; a little headroom, but never enough to freeze the tab. */
+export const MAX_ARRAY_ITEMS = 10_000;
+export const MAX_STRING = 8_000;
+/** The simulated SD card: same limits the loader applies to saved cards. */
+export const SD_MAX_FILES = 16;
+export const SD_MAX_BYTES = 64 * 1024;
+const SD_NAME = /^[\w. -]{1,32}$/;
 
 export class Interpreter {
   private global: Scope = { vars: new Map(), parent: null };
@@ -648,7 +659,7 @@ export class Interpreter {
         if (args.length) {
           const t = this.typeOf(n.args[0]);
           if (args.length > 1 && typeof args[0] === 'number') {
-            text = t === 'float' ? formatFloat(args[0], args[1]) : (args[0] >>> 0).toString(args[1]).toUpperCase();
+            text = t === 'float' ? formatFloat(args[0], args[1]) : inBase(args[0], args[1]);
           } else text = this.toText(args[0], t);
         }
         io.write(prop === 'println' ? text + '\n' : text);
@@ -891,7 +902,7 @@ export class Interpreter {
         if (args.length === 2 && typeof args[0] === 'number') {
           const base = args[1];
           if (this.typeOf(n.args[0]) === 'float') return formatFloat(args[0], base);
-          return (args[0] >>> 0).toString(base).toUpperCase();
+          return inBase(args[0], base);
         }
         return this.toText(args[0], this.typeOf(n.args[0]));
       }
@@ -939,7 +950,7 @@ export class Interpreter {
         let s = '';
         if (args.length) {
           const t = this.typeOf(n.args[0]);
-          s = args.length > 1 && typeof args[0] === 'number' ? (t === 'float' ? formatFloat(args[0], args[1]) : (args[0] >>> 0).toString(args[1]).toUpperCase()) : this.toText(args[0], t);
+          s = args.length > 1 && typeof args[0] === 'number' ? (t === 'float' ? formatFloat(args[0], args[1]) : inBase(args[0], args[1])) : this.toText(args[0], t);
         }
         text(prop === 'println' ? s + '\n' : s);
         return;
@@ -1002,7 +1013,7 @@ export class Interpreter {
         let text = '';
         if (args.length) {
           const t = this.typeOf(n.args[0]);
-          if (args.length > 1 && typeof args[0] === 'number') text = t === 'float' ? formatFloat(args[0], args[1]) : (args[0] >>> 0).toString(args[1]).toUpperCase();
+          if (args.length > 1 && typeof args[0] === 'number') text = t === 'float' ? formatFloat(args[0], args[1]) : inBase(args[0], args[1]);
           else text = this.toText(args[0], t);
         }
         write(text);
