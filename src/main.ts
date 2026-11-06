@@ -45,6 +45,8 @@ interface Saved {
   instructor: boolean;
   /** camera and overlay options from the View menu */
   view?: { pinLabels: 'off' | 'used' | 'all'; follow: boolean; wiresOnTop: boolean; arrows?: boolean };
+  /** width of the side panel in pixels, after the person dragged it */
+  sideW?: number;
   /** the live board panel is folded away */
   boardHidden?: boolean;
   /** grid size parts snap to, in cm (0 = fine 0.25 cm steps) */
@@ -667,6 +669,54 @@ function renderBoardPanel() {
 $('board-collapse').onclick = () => { saved.boardHidden = !saved.boardHidden; save(); renderBoardPanel(); renderView(); };
 renderBoardPanel();
 
+// ---------- workspace ----------
+/** A copy of a part beside the original (sandbox only): same settings, no wires. */
+function duplicatePart(src: Part) {
+  if (mode !== 'sandbox' || src.locked || src.type === 'uno') return;
+  const { mount: _m, mdx: _x, mdz: _z, ...props } = JSON.parse(JSON.stringify(src.props));
+  const copy = newPart(src.type, { props, rot: src.rot, x: src.x, z: src.z });
+  world.addPart(copy);
+  world.placeNear(copy, src);
+  world.select(copy);
+  world.audio.sfx('place');
+  save();
+}
+
+// the side panel resizes by dragging its left edge
+const mainEl = document.querySelector('main')!;
+const grip = $('side-grip');
+function setSideWidth(px: number) {
+  const w = Math.round(Math.max(300, Math.min(px, innerWidth - 420)));
+  mainEl.style.setProperty('--side-w', `${w}px`);
+  return w;
+}
+if (saved.sideW) setSideWidth(saved.sideW);
+grip.addEventListener('pointerdown', e => {
+  grip.setPointerCapture(e.pointerId);
+  document.body.classList.add('resizing');
+  const move = (ev: PointerEvent) => { saved.sideW = setSideWidth(innerWidth - ev.clientX); };
+  const up = () => { grip.removeEventListener('pointermove', move); document.body.classList.remove('resizing'); save(); };
+  grip.addEventListener('pointermove', move);
+  grip.addEventListener('pointerup', up, { once: true });
+});
+grip.addEventListener('keydown', e => {
+  const cur = saved.sideW ?? document.querySelector('.side')!.getBoundingClientRect().width;
+  if (e.key === 'ArrowLeft') saved.sideW = setSideWidth(cur + 30);
+  else if (e.key === 'ArrowRight') saved.sideW = setSideWidth(cur - 30);
+  else return;
+  e.preventDefault();
+  save();
+});
+grip.addEventListener('dblclick', () => { delete saved.sideW; mainEl.style.removeProperty('--side-w'); save(); });
+
+// focus mode: the desk gets the whole window
+function setFocus(on: boolean) {
+  document.body.classList.toggle('focus-mode', on);
+  $('focus-btn').setAttribute('aria-pressed', String(on));
+  world.kick(800);
+}
+$('focus-btn').onclick = () => setFocus(!document.body.classList.contains('focus-mode'));
+
 // ---------- compass ----------
 const compassNeedle = document.querySelector<HTMLElement>('#compass svg')!;
 let compassAngle = NaN;
@@ -1240,7 +1290,7 @@ function renderInspector() {
       <button data-nudge="down" style="grid-area:d" aria-label="Move closer">▼</button>
     </div>`}
     <div class="move-info">
-      <div class="move-rot"><button class="mini" data-act="rotate-left" title="Rotate left (Q)">⟲</button><button class="mini" data-act="rotate" title="Rotate right (E or R)">⟳</button></div>
+      <div class="move-rot"><button class="mini" data-act="rotate-left" title="Rotate left (Q)">⟲</button><button class="mini" data-act="rotate" title="Rotate right (E or R)">⟳</button><button class="mini" data-act="frame" title="Look at it (F)">◎</button>${canDelete ? '<button class="mini" data-act="duplicate" title="Duplicate (Ctrl/⌘ + D)">⧉</button>' : ''}</div>
       <p data-pos></p>
       <p class="muted">${part.locked ? 'This part stays in place.' : 'Hold to keep moving. <kbd>←↑↓→</kbd> work too, <kbd>Shift</kbd> for big steps.'}</p>
     </div>
@@ -1440,6 +1490,8 @@ inspectorEl.addEventListener('click', e => {
   if (act === 'close') world.select(null);
   if (act === 'rotate') world.rotatePart(part);
   if (act === 'rotate-left') world.rotatePart(part, -1);
+  if (act === 'frame') world.frameOn(part);
+  if (act === 'duplicate') duplicatePart(part);
   if (act === 'delete') world.removePart(part);
   if (act === 'phone') setPhone(true);
   if (act === 'sd-erase') { part.props.files = {}; save(); }
@@ -1777,6 +1829,7 @@ window.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     if (world.isWiring) world.cancelWiring();
     else if (!viewPop.hidden) viewPop.hidden = true;
+    else if (document.body.classList.contains('focus-mode')) setFocus(false);
     else if (!schematicEl.hidden) setSchematic(false);
     else if (!phoneEl.hidden) setPhone(false);
     else if (!meterEl.hidden) setMeter(false);
@@ -1789,6 +1842,8 @@ window.addEventListener('keydown', e => {
   if (!sel) return;
   const arrow = ({ ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' } as Record<string, 'up' | 'down' | 'left' | 'right'>)[e.key];
   if (arrow) { e.preventDefault(); world.nudge(sel, arrow, e.shiftKey); return; }
+  if ((e.key === 'f' || e.key === 'F') && !e.metaKey && !e.ctrlKey) world.frameOn(sel);
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'd') { e.preventDefault(); duplicatePart(sel); return; }
   if (e.key === 'r' || e.key === 'R' || e.key === 'e' || e.key === 'E') world.rotatePart(sel);
   if (e.key === 'q' || e.key === 'Q') world.rotatePart(sel, -1);
   if ((e.key === 'Delete' || e.key === 'Backspace') && mode === 'sandbox' && !sel.locked) world.removePart(sel);

@@ -722,6 +722,36 @@ export class World {
     if (this.grid) { this.scene.remove(this.grid); this.grid = null; }
   }
 
+  /** Glide the camera in to look at one part. */
+  frameOn(part: Part) {
+    if (!part.group) return;
+    const r = this.rectOf(part);
+    const center = new THREE.Vector3((r.minX + r.maxX) / 2, part.group.position.y, (r.minZ + r.maxZ) / 2);
+    const size = Math.max(r.maxX - r.minX, r.maxZ - r.minZ, 4);
+    const dir = this.camera.position.clone().sub(this.controls.target).normalize();
+    const to = center.clone().add(dir.multiplyScalar(THREE.MathUtils.clamp(size * 2.6, this.controls.minDistance, this.controls.maxDistance)));
+    this.glide = { from: this.camera.position.clone(), to, fromT: this.controls.target.clone(), toT: center, t: 0 };
+    this.kick(1200);
+  }
+
+  /** Put a part beside another one, in the first free spot around it. */
+  placeNear(part: Part, near: Part) {
+    const r = this.rectOf(near), w = r.maxX - r.minX + 0.5, d = r.maxZ - r.minZ + 0.5;
+    for (let ring = 1; ring <= 3; ring++) {
+      for (const [dx, dz] of [[w, 0], [0, d], [-w, 0], [0, -d], [w, d], [-w, d], [w, -d], [-w, -d]]) {
+        const x = near.x + dx * ring, z = near.z + dz * ring;
+        if (Math.abs(x) < DESK && Math.abs(z) < DESK && !this.blockedAt(part, x, z)) {
+          part.x = x;
+          part.z = z;
+          this.placeGroup(part);
+          this.wiresDirty = this.hitsDirty = this.shadowDirty = true;
+          return;
+        }
+      }
+    }
+    this.placeFree(part);
+  }
+
   /** Slide a part by dx/dz cm. Refuses to overlap anything; a part on a robot stays on its deck if it can. */
   moveBy(part: Part, dx: number, dz: number): boolean {
     if (part.locked) return false;
