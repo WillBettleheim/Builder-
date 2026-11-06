@@ -471,7 +471,7 @@ export class World {
   }
 
   /** Where a part is right now: its spot on the desk, or where it has driven to while running. */
-  poseOf(p: Part): { x: number; z: number; a: number } {
+  poseOf(p: Part): { x: number; z: number; a: number; y?: number } {
     return p.state.pose ?? { x: p.x, z: p.z, a: (-p.rot * Math.PI) / 2 };
   }
 
@@ -490,11 +490,11 @@ export class World {
       const dx = part.props.mdx ?? 0, dz = part.props.mdz ?? 0;
       part.x = hp.x + dx * c + dz * s;
       part.z = hp.z - dx * s + dz * c;
-      part.group!.position.set(part.x, PARTS[host.type].deck!.y, part.z);
+      part.group!.position.set(part.x, PARTS[host.type].deck!.y + (hp.y ?? 0), part.z);
       part.group!.rotation.y = hp.a - (part.rot * Math.PI) / 2;
     } else {
       const p = this.poseOf(part);
-      part.group!.position.set(p.x, 0, p.z);
+      part.group!.position.set(p.x, p.y ?? 0, p.z);
       part.group!.rotation.y = p.a;
     }
     part.group!.updateMatrixWorld(true);
@@ -598,13 +598,14 @@ export class World {
   private driveRobots(rawDt: number) {
     if (this.running !== this.wasRunning) {
       this.wasRunning = this.running;
-      if (this.running) for (const p of this.parts) if (PARTS[p.type].drive) { delete p.state.pose; p.state.travelled = 0; p.state.bumps = 0; p.state.distL = 0; p.state.distR = 0; this.clearTrail(p.id); }
+      if (this.running) for (const p of this.parts) if (PARTS[p.type].drive || PARTS[p.type].locomote) { delete p.state.pose; p.state.travelled = 0; p.state.bumps = 0; p.state.distL = 0; p.state.distR = 0; this.clearTrail(p.id); }
       this.wiresDirty = true; // robots may have jumped back to their start
       this.hitsDirty = true;
       this.shadowDirty = true;
     }
     for (const p of this.parts) {
       const def = PARTS[p.type];
+      if (def.locomote && p.group) { this.locomote(p, rawDt * this.timeScale); continue; }
       if (!def.drive || !p.group) continue;
       const powered = !p.state.missing?.length;
       const test = this.testDrive?.id === p.id ? this.testDrive : null;
@@ -641,6 +642,31 @@ export class World {
       this.extendTrail(p, pose.x, pose.z);
       this.kick();
     }
+  }
+
+  /** Move a legged or flying robot by what its legs or propellers did this frame. */
+  private locomote(p: Part, dt: number) {
+    const powered = !p.state.missing?.length;
+    const m = PARTS[p.type].locomote!(p, this.board, dt, this.running && powered);
+    p.state.moving = !!(m.forward || m.side || m.turn || m.up);
+    if (!p.state.moving) return;
+    const pose = { y: 0, ...this.poseOf(p) };
+    const a = pose.a + m.turn;
+    const x = THREE.MathUtils.clamp(pose.x - m.forward * Math.sin(a) + m.side * Math.cos(a), -DESK, DESK);
+    const z = THREE.MathUtils.clamp(pose.z - m.forward * Math.cos(a) - m.side * Math.sin(a), -DESK, DESK);
+    const y = THREE.MathUtils.clamp(pose.y + m.up, 0, 90);
+    // up above the walls nothing is in the way; down low, it bumps like any robot
+    if (y < 9 && (m.forward || m.side || m.turn) && this.blockedAt(p, x, z, undefined, a) && !this.blockedAt(p, pose.x, pose.z, undefined, pose.a)) {
+      if (!(p.state.bumpUntil > performance.now())) this.audio.click();
+      p.state.bumpUntil = performance.now() + 600;
+      p.state.bumps = (p.state.bumps ?? 0) + 1;
+      p.state.pose = { ...pose, y };
+    } else {
+      p.state.travelled = (p.state.travelled ?? 0) + Math.hypot(x - pose.x, z - pose.z);
+      p.state.pose = { x, z, a, y };
+    }
+    if (y < 1) this.extendTrail(p, p.state.pose.x, p.state.pose.z);
+    this.kick();
   }
 
   /** Where each robot has been, drawn on the mat. */
@@ -738,7 +764,7 @@ export class World {
   /** Keep the camera on a driving robot, without changing the angle. */
   private followRobot() {
     if (!this.view.follow || this.glide) return;
-    const robot = this.parts.find(p => PARTS[p.type].drive && p.group);
+    const robot = this.parts.find(p => (PARTS[p.type].drive || PARTS[p.type].locomote) && p.group);
     if (!robot) return;
     const pose = this.poseOf(robot);
     const delta = new THREE.Vector3(pose.x, 0, pose.z).sub(this.controls.target).setY(0).multiplyScalar(0.12);
@@ -1407,7 +1433,7 @@ export class World {
     }
     this.driveRobots(dt);
     // passengers follow their hosts (a robot driving, or a host being dragged)
-    const moved = this.parts.some(p => PARTS[p.type].drive && (p.state.vl || p.state.vr));
+    const moved = this.parts.some(p => (PARTS[p.type].drive && (p.state.vl || p.state.vr)) || p.state.moving);
     if (moved || this.drag || this.running) {
       for (const p of this.parts) if ((p.props.mount || p.state.pose) && p.group) this.placeGroup(p);
     }

@@ -77,6 +77,11 @@ export interface PartDef {
   flat?: boolean;
   /** a robot base: how fast its left and right wheels turn right now, in cm/s (the world moves it) */
   drive?(part: Part, board: Board): { left: number; right: number; track: number };
+  /**
+   * A robot that moves itself some other way (legs, propellers): how far it went this frame, in its own
+   * frame: forward and sideways in cm, turn in radians (+ is left), up in cm. dt is sketch time.
+   */
+  locomote?(part: Part, board: Board, dt: number, running: boolean): { forward: number; side: number; turn: number; up: number };
 }
 
 // ---------- shared materials & helpers ----------
