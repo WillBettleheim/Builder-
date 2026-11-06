@@ -5,6 +5,7 @@
 import type { Board } from '../sim/board';
 import { buildNets, endpoint, type Wire } from '../sim/circuit';
 import { PARTS, type Part } from '../sim/parts';
+import { escapeHtml } from './html';
 
 interface Palette { ink: string; ink2: string; muted: string; paper: string; card: string; wire: string; red: string; accent: string }
 const SCREEN: Palette = { ink: 'var(--ink)', ink2: 'var(--ink-2)', muted: 'var(--ink-3)', paper: 'var(--paper)', card: 'var(--card)', wire: 'var(--ink-2)', red: '#e2533b', accent: 'var(--accent)' };
@@ -12,7 +13,7 @@ const PRINT: Palette = { ink: '#16181d', ink2: '#3a3f47', muted: '#7a808a', pape
 
 const pinName = (p: number) => (p >= 14 ? `A${p - 14}` : `D${p}`);
 const PWM = new Set([3, 5, 6, 9, 10, 11]);
-const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
+const esc = escapeHtml;
 // parts that are only wiring or scenery have no place in a schematic
 const SKIP = new Set(['uno', 'breadboard', 'car', 'magnet']);
 

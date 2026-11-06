@@ -1,5 +1,6 @@
 // Nova on screen: the character, her speech-bubble pop-ups and the "Ask Nova" panel.
 import { instructorSvg, type Mood } from './instructor-art';
+import { escapeHtml } from './html';
 
 export interface InstructorAction { label: string; run: () => void; primary?: boolean }
 export interface InstructorReply { html: string; mood?: Mood; actions?: InstructorAction[]; chips?: string[] }
@@ -122,7 +123,7 @@ export class Instructor {
 
   ask(q: string) {
     if (!this.panelOpen) this.togglePanel(true);
-    this.addMessage('you', q.replace(/</g, '&lt;'));
+    this.addMessage('you', escapeHtml(q));
     this.speak('think');
     // a short pause feels like she's thinking it over
     setTimeout(() => {
@@ -227,8 +228,7 @@ export class Instructor {
   }
 
   private renderChips(chips: string[]) {
-    const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
-    this.panel.querySelector('.ins-chips')!.innerHTML = chips.map(c => `<button class="chip" data-chip="${esc(c)}">${esc(c)}</button>`).join('');
+    this.panel.querySelector('.ins-chips')!.innerHTML = chips.map(c => `<button class="chip" data-chip="${escapeHtml(c)}">${escapeHtml(c)}</button>`).join('');
   }
 
   private blinkLoop() {

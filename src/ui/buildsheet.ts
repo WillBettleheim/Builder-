@@ -2,6 +2,7 @@
 // numbered wiring steps and the code, in a printable sheet.
 import { endpointLabel, splitEndpoint, type Wire } from '../sim/circuit';
 import type { Part } from '../sim/parts';
+import { escapeHtml } from './html';
 
 /** What to actually buy for each part, including the small extras it needs. */
 const SHOPPING: Record<string, { item: string; extras?: string[] }> = {
@@ -65,7 +66,7 @@ const COLOR_NAMES: Record<string, string> = {
   '#d7263d': 'red', '#2a2a2e': 'black', '#f4f1ea': 'white',
 };
 
-const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const esc = escapeHtml;
 
 /** Libraries the sketch includes, so people know what to install. */
 function libraries(code: string): string[] {

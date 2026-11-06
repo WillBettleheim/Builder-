@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import type { Board, PinListener } from './board';
+import { escapeHtml } from '../ui/html';
 
 // 'pass' terminals just join wires together (breadboard holes)
 export type TerminalKind = 'signal' | '5V' | 'GND' | 'pass';
@@ -2452,7 +2453,7 @@ const sdcard: PartDef = {
     const files: Record<string, string> = part.props.files ?? {};
     const names = Object.keys(files);
     if (!names.length) return 'The card is empty';
-    const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    const esc = escapeHtml;
     return names.map(n => {
       const lines = files[n].split('\n');
       const tail = lines.slice(-6).join('\n');

@@ -1,13 +1,14 @@
 // Lightweight code editor: a transparent textarea over a syntax-highlighted <pre>,
 // with autocomplete, hover help and a marker for the line that's running.
 import { DOCS, PLAIN_WORDS, objectKind } from './docs';
+import { escapeHtml } from './html';
 
 const KEYWORDS = new Set(['if', 'else', 'for', 'while', 'do', 'return', 'break', 'continue', 'switch', 'case', 'default', 'const', 'static', 'volatile', 'sizeof']);
 const TYPES = new Set(['void', 'int', 'long', 'short', 'unsigned', 'signed', 'float', 'double', 'bool', 'boolean', 'byte', 'char', 'word', 'String', 'Servo', 'DHT', 'LiquidCrystal_I2C', 'Adafruit_NeoPixel', 'Adafruit_SSD1306', 'Stepper', 'Keypad', 'LedControl', 'size_t', 'uint8_t', 'uint16_t', 'uint32_t', 'int8_t', 'int16_t', 'int32_t']);
 const CONSTS = new Set(['HIGH', 'LOW', 'INPUT', 'OUTPUT', 'INPUT_PULLUP', 'LED_BUILTIN', 'true', 'false', 'A0', 'A1', 'A2', 'A3', 'A4', 'A5', 'PI', 'DEC', 'HEX', 'BIN', 'OCT', 'RISING', 'FALLING', 'CHANGE', 'DHT11', 'DHT22', 'SSD1306_WHITE', 'SSD1306_BLACK', 'SSD1306_SWITCHCAPVCC', 'NO_KEY']);
 const BUILTINS = new Set(['pinMode', 'digitalWrite', 'digitalRead', 'analogWrite', 'analogRead', 'delay', 'delayMicroseconds', 'millis', 'micros', 'tone', 'noTone', 'pulseIn', 'map', 'constrain', 'min', 'max', 'abs', 'random', 'Serial', 'setup', 'loop', 'sqrt', 'pow', 'sin', 'cos', 'attachInterrupt', 'digitalPinToInterrupt']);
 
-const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const esc = escapeHtml;
 
 export function highlight(src: string): string {
   const re = /(\/\/[^\n]*|\/\*[\s\S]*?(?:\*\/|$))|("(?:\\.|[^"\\\n])*"?|'(?:\\.|[^'\\\n])*'?)|(^[ \t]*#[^\n]*)|(\b0x[0-9a-fA-F]+\b|\b\d+\.?\d*(?:[eE][-+]?\d+)?[uUlLfF]*\b)|([A-Za-z_]\w*)/gm;
@@ -173,7 +174,6 @@ export class CodeEditor {
   }
 
   private renderPopup() {
-    const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;');
     this.popup.innerHTML = this.items.map((it, i) => `<div class="ac-item ${i === this.active ? 'on' : ''}" data-i="${i}" role="option"><b>${esc(it.label)}</b><span>${esc(it.detail)}</span></div>`).join('');
     const doc = DOCS[this.items[this.active].detail === 'in your code' ? '' : this.items[this.active].label];
     if (doc && doc.doc) this.popup.insertAdjacentHTML('beforeend', `<div class="ac-doc">${esc(doc.doc)}</div>`);
